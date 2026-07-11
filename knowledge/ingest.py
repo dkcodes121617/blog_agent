@@ -22,8 +22,9 @@ def _read_body(site_dir: Path, slug: str) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
 
 
-def ingest_existing(site_dir: Path | None = None) -> KnowledgeBase:
-    site_dir = site_dir or _resolve_site_dir()
+def ingest_existing(site_dir: Path | str | None = None) -> KnowledgeBase:
+    # Coerce to Path — callers may pass a str (e.g. GitPython's working_tree_dir).
+    site_dir = Path(site_dir) if site_dir else _resolve_site_dir()
     snap = build_snapshot(site_dir)
     kb = KnowledgeBase()
 

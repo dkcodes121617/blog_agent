@@ -177,8 +177,9 @@ def _multiline_field(text: str, key: str) -> str:
     return m.group(1) if m else _f(text, key)
 
 
-def build_snapshot(site_dir: Path | None = None) -> FactsSnapshot:
-    site_dir = site_dir or _resolve_site_dir()
+def build_snapshot(site_dir: Path | str | None = None) -> FactsSnapshot:
+    # Coerce to Path — callers may pass a str (e.g. GitPython's working_tree_dir).
+    site_dir = Path(site_dir) if site_dir else _resolve_site_dir()
     site_ts = _read(site_dir, CONFIG.site_config_rel)
     projects_ts = _read(site_dir, f"{CONFIG.data_dir_rel}/projects.ts")
     oss_ts = _read(site_dir, f"{CONFIG.data_dir_rel}/openSource.ts")
