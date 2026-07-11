@@ -14,8 +14,8 @@ cron, GitHub Actions, Firebase Hosting, local embeddings) is free.
 ## How it works
 
 ```
-Render Cron (hourly, free)
-        │  "is a post due this hour?" (randomized daily plan)
+GitHub Actions cron (hourly, free on the public agent repo)
+        │  "is a post due now?" (date-seeded plan vs. posts already published today)
         ▼
 LangGraph pipeline (Sonnet 4.6 via ClaudeStore proxy)
   load facts → pick topic → [uniqueness gate] → outline → write
@@ -96,15 +96,28 @@ The workflow lives at `wizcodes_next/.github/workflows/deploy.yml`. In that repo
 Get it once with the CLI if you prefer: `firebase init hosting:github` wires this
 up automatically. After this, any push that touches `src/**` builds and deploys.
 
-### 3. Render Cron Job (runs the agent, free)
-- Push this `agent/` folder to a GitHub repo (its own repo is fine).
-- Render → **New → Blueprint** → point at the repo (`render.yaml` is detected).
-- Set the secret env vars in the dashboard (marked `sync:false`): `ANTHROPIC_API_KEY`,
-  `GITHUB_TOKEN`. The rest have defaults in `render.yaml`.
-- Set `DRY_RUN=0` to publish for real (start with `1` to watch it run safely).
+### 3. Run the agent on GitHub Actions (free)
+The agent runs as a scheduled workflow in THIS (public) repo — public repos get
+unlimited free Actions minutes, so there's no server to pay for. Render was dropped
+because Render cron jobs are not free.
 
-That's it. The cron fires hourly, publishes when the plan says so, and the site
-updates itself.
+- The workflow is `.github/workflows/publish.yml` (hourly + a manual "Run workflow"
+  button). It's stateless — no server, no saved files.
+- In this repo → **Settings → Secrets and variables → Actions**, add two secrets:
+  - `ANTHROPIC_API_KEY` — your ClaudeStore key.
+  - `PUBLISH_TOKEN` — the fine-grained PAT from step 1 (Actions reserves the name
+    `GITHUB_TOKEN`, so the secret is `PUBLISH_TOKEN`; the workflow maps it to the
+    `GITHUB_TOKEN` env var the app reads).
+- Test safely: **Actions → Publish blog post → Run workflow** with *force = true*
+  to generate one post immediately.
+
+The cron then fires hourly; each run publishes only if today's plan says a post is
+due and fewer than that many are already published today (counted from the site
+repo, so it can't double-post).
+
+> **Keep-alive note:** GitHub disables scheduled workflows after ~60 days with no
+> commits to the repo. If you don't touch this repo for two months, GitHub emails
+> you a one-click re-enable — or just push any small change occasionally.
 
 ---
 
@@ -129,6 +142,6 @@ needed**.
   injection-guard-safe prompt phrasing.
 
 ## Tuning
-Everything is env-driven (`.env` / Render vars): `MAX_POSTS_PER_DAY`,
-`AVG_POSTS_PER_DAY`, publish window, `MIN_GAP_HOURS`, `TOPIC_SIM_THRESHOLD`,
-`BODY_SIM_THRESHOLD`, `SCHEDULE_TZ`.
+Everything is env-driven (`.env` locally / workflow `env:` in Actions):
+`MAX_POSTS_PER_DAY`, `AVG_POSTS_PER_DAY`, publish window, `MIN_GAP_HOURS`,
+`TOPIC_SIM_THRESHOLD`, `BODY_SIM_THRESHOLD`, `SCHEDULE_TZ`.

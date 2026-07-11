@@ -37,6 +37,25 @@ def _authed_remote() -> str:
     return f"https://x-access-token:{token}@github.com/{CONFIG.github_repo}.git"
 
 
+def count_posts_today(site_dir=None) -> int:
+    """Count posts already published today, read from the site repo's posts.ts.
+
+    This is the stateless anti-double-post guard: instead of persisting how many
+    we posted, we ask the real source of truth. Works on ephemeral runners.
+    """
+    from datetime import date
+    from pathlib import Path
+    from config import CONFIG
+    site_dir = Path(site_dir) if site_dir else CONFIG.site_repo_dir
+    registry = site_dir / CONFIG.posts_registry_rel
+    if not registry.exists():
+        return 0
+    import re
+    text = registry.read_text(encoding="utf-8", errors="replace")
+    today = date.today().isoformat()
+    return len(re.findall(rf"date:\s*'{re.escape(today)}'", text))
+
+
 def ensure_repo() -> Repo:
     d = CONFIG.site_repo_dir
     if (d / ".git").exists():

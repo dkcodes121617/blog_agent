@@ -1,15 +1,22 @@
-"""Cron entrypoint for the WizCodes blog agent (free Render Cron Job).
+"""Cron entrypoint for the WizCodes blog agent.
 
-Render invokes this on a schedule (hourly). Each run:
-  1. Ensures the KB is bootstrapped.
-  2. Asks the planner whether a post is due right now.
-  3. If due, generates + publishes one post, then marks the slot done.
-  4. Otherwise exits immediately (near-zero cost).
+Runs on a schedule (hourly) from GitHub Actions (free for the public agent repo)
+or any other cron. STATELESS by design — nothing is persisted between runs:
+
+  1. Decide if a post is due now: compare today's deterministic plan (seeded by the
+     date, so every run agrees) against how many posts are ALREADY published today
+     (counted from the site repo's posts.ts — the real source of truth).
+  2. If due: health-check the proxy, rebuild the KB from the site repo, generate +
+     publish one post.
+  3. Otherwise exit immediately (near-zero cost).
+
+Because "already published today" is read from the repo, it's impossible to
+double-post even though runners are ephemeral and keep no local state.
 
 Run modes:
-  python main.py            # cron mode: publish only if a slot is due
+  python main.py            # cron mode: publish only if a post is due now
   python main.py --now      # force one generation now (ignores the schedule)
-  python main.py --plan     # print today's plan and exit
+  python main.py --plan     # print today's deterministic plan and exit
 """
 from __future__ import annotations
 
@@ -30,13 +37,12 @@ def _setup_logging():
 
 
 def _ensure_kb(site_dir=None):
-    """Refresh the KB from the (freshly pulled) site repo.
+    """Rebuild the KB from the (freshly pulled) site repo.
 
     The KB is DERIVED state — every published post lives in the site repo's
-    posts.ts + <slug>.mdx. So on each run we re-ingest from there, which makes the
-    agent safe on Render's free tier (no persistent disk): even if the local KB
-    files are wiped between cron runs, uniqueness memory is rebuilt from the repo,
-    which already contains everything ever published (including prior auto-posts).
+    posts.ts + <slug>.mdx. Re-ingesting each run makes the agent safe on stateless
+    runners: uniqueness memory is rebuilt from the repo, which already contains
+    everything ever published (including prior auto-posts).
     """
     from knowledge.ingest import ingest_existing
     return ingest_existing(site_dir=site_dir)
@@ -47,43 +53,47 @@ def main(argv: list[str]) -> int:
     log = logging.getLogger("agent.main")
 
     if "--plan" in argv:
-        from scheduler.planner import load_or_make_plan
-        plan = load_or_make_plan()
-        print(f"Plan for {plan.day}:")
-        for s in plan.slots:
-            print(f"  {s.time_iso[11:16]}  {'done' if s.done else 'pending'}")
-        if not plan.slots:
-            print("  (no posts scheduled today)")
+        from scheduler.planner import plan_times, slots_due
+        times = plan_times()
+        print(f"Today's plan: {len(times)} post(s) at " +
+              (", ".join(t.strftime('%H:%M') for t in times) or "(none)"))
+        print(f"Slots due by now: {slots_due()}")
         return 0
 
     force = "--now" in argv
 
-    # Cheap check FIRST — most hourly cron runs have nothing due and should exit
-    # in a second without cloning the repo or loading the embedding model.
-    slot = None
-    if not force:
-        from scheduler.planner import due_slot, mark_slot_done
-        slot = due_slot()
-        if slot is None:
-            log.info("no post due this run — exiting")
-            return 0
-        log.info("slot %s is due — generating", slot.time_iso[11:16])
+    # In live mode we need the site repo to (a) count today's posts and (b) rebuild
+    # the KB. In dry-run we use the local sibling site folder. Clone/pull up front
+    # only when we might actually publish.
+    site_dir = None
 
-    # Pre-flight health check (circuit breaker): if the proxy is having a 502/slow
-    # spell, exit cheaply now instead of burning topic/outline calls into a wall.
-    # The slot stays due, so the next hourly cron retries when the proxy recovers.
+    if not force:
+        # Cheap decision first. In live mode this needs the repo (to count today's
+        # posts); in dry-run, use the local folder.
+        from publish.github_publisher import count_posts_today
+        if not CONFIG.dry_run:
+            from publish.github_publisher import ensure_repo
+            repo = ensure_repo()
+            site_dir = repo.working_tree_dir
+        published_today = count_posts_today(site_dir)
+
+        from scheduler.planner import is_post_due
+        if not is_post_due(published_today):
+            log.info("no post due this run (published today=%d) — exiting", published_today)
+            return 0
+        log.info("a post is due now (published today=%d) — generating", published_today)
+
+    # Pre-flight health check (circuit breaker): if the proxy is 502-ing/slow, exit
+    # cheaply now. Nothing is marked done, so the next hourly run simply retries.
     from llm.client import LLMClient
     ok, detail = LLMClient().ping()
     if not ok:
-        log.warning("proxy health check failed (%s) — skipping this run; slot stays due", detail[:120])
+        log.warning("proxy health check failed (%s) — skipping this run", detail[:120])
         return 0
     log.info("proxy healthy — proceeding")
 
-    # A post is due (or --now). In live mode, pull the site repo up front so the
-    # KB is rebuilt against everything already published (prior auto-posts too),
-    # which keeps uniqueness correct even on a stateless free-tier box.
-    site_dir = None
-    if not CONFIG.dry_run:
+    # Ensure the repo is present (for --now we may not have cloned above).
+    if not CONFIG.dry_run and site_dir is None:
         from publish.github_publisher import ensure_repo
         repo = ensure_repo()
         site_dir = repo.working_tree_dir
@@ -94,13 +104,11 @@ def main(argv: list[str]) -> int:
     status = result.get("status")
 
     if status in ("ready", "published"):
-        if not force:
-            mark_slot_done(slot)
         log.info("run succeeded: %s (%s)", result.get("slug"), status)
         return 0
 
-    # Generation aborted (e.g. couldn't find a unique topic). Do NOT mark the slot
-    # done — a later cron run will retry the slot.
+    # Generation aborted (unique-topic exhaustion or a proxy error). Nothing is
+    # persisted, so the next hourly run retries cleanly.
     log.warning("run did not publish: %s / %s", status, result.get("abort_reason"))
     return 1
 
