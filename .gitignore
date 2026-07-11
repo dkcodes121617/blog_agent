@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+output/
+knowledge_base/embeddings.npy
+knowledge_base/content_ledger.json
+knowledge_base/daily_plan.json
+knowledge_base/checkpoints/
+knowledge_base/*.log
+site_repo/
+.cache/

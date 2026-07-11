@@ -1,0 +1,25 @@
+# ── WizCodes Blog Agent — dependencies ──
+# Kept lean on purpose: the intelligence lives in the LangGraph nodes + prompts,
+# not in a heavy dependency tree.
+
+# LangGraph orchestration
+langgraph>=0.2.60
+langchain-core>=0.3.30
+
+# HTTP to the Claude-compatible proxy (we call the Anthropic Messages API shape
+# directly; requests gives us full control over headers incl. the CLI User-Agent
+# the proxy's Cloudflare requires).
+requests>=2.32.0
+
+# Uniqueness knowledge base — LOCAL embeddings, zero API cost.
+sentence-transformers>=3.3.0
+numpy>=1.26,<3
+
+# Publishing to the private GitHub repo
+GitPython>=3.1.43
+
+# Scheduling / config / resilience
+APScheduler>=3.10.4
+python-dotenv>=1.0.1
+tenacity>=9.0.0
+PyYAML>=6.0.2
