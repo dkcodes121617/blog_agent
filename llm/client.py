@@ -65,14 +65,20 @@ class LLMClient:
     # ── low-level ──
     @retry(
         retry=retry_if_exception_type(LLMTransient),
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=1.5, min=2, max=30),
+        # The proxy has brief 502/gateway spells that clear within a minute or two.
+        # 5 attempts with backoff up to 40s rides through them without stalling for
+        # long. A truly persistent outage still gives up and aborts the run cleanly.
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=3, max=40),
         reraise=True,
     )
     def _post(self, payload: dict) -> dict:
         url = f"{self.base_url}/v1/messages"
+        # (connect timeout, read timeout). This proxy is legitimately slow on long
+        # generations (~30-70s is normal), so the read timeout is generous — but
+        # bounded so a truly hung connection fails instead of blocking for minutes.
         try:
-            resp = self._session.post(url, data=json.dumps(payload), timeout=180)
+            resp = self._session.post(url, data=json.dumps(payload), timeout=(10, 150))
         except requests.RequestException as e:
             raise LLMTransient(f"network error: {e}") from e
 
@@ -140,7 +146,11 @@ class LLMClient:
         Retries with a firmer 'return only JSON' nudge on parse failure — which
         also recovers the rare case where the proxy's guard prepended prose.
         """
-        sys = system.rstrip() + "\nReturn only a single valid JSON value with no prose and no markdown fences."
+        sys = system.rstrip() + (
+            "\nRespond with a single valid JSON value only — no explanation before "
+            "or after it, no markdown fences. Start your reply with the opening "
+            "brace or bracket and stop at the closing one."
+        )
         last_err: Exception | None = None
         for i in range(attempts):
             raw = self.complete(system=sys, user=user, max_tokens=max_tokens, model=model)

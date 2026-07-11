@@ -17,16 +17,23 @@ AGENT_ROOT = Path(__file__).resolve().parent
 load_dotenv(AGENT_ROOT / ".env")
 
 
+def _clean(raw: str | None) -> str:
+    """Strip whitespace and any trailing inline '# comment' (dotenv keeps those)."""
+    if raw is None:
+        return ""
+    return raw.split("#", 1)[0].strip()
+
+
 def _int(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, str(default)))
+        return int(_clean(os.getenv(name)) or default)
     except (TypeError, ValueError):
         return default
 
 
 def _float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, str(default)))
+        return float(_clean(os.getenv(name)) or default)
     except (TypeError, ValueError):
         return default
 
@@ -45,7 +52,7 @@ class Config:
 
     # ── GitHub publishing ──
     github_token: str = os.getenv("GITHUB_TOKEN", "")
-    github_repo: str = os.getenv("GITHUB_REPO", "wizcodes12/wizcodes_next")
+    github_repo: str = os.getenv("GITHUB_REPO", "dkcodes121617/wizcodes_main_website")
     github_branch: str = os.getenv("GITHUB_BRANCH", "main")
     git_author_name: str = os.getenv("GIT_AUTHOR_NAME", "WizCodes Blog Bot")
     git_author_email: str = os.getenv("GIT_AUTHOR_EMAIL", "business@wizcodes.site")

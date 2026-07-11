@@ -1,0 +1,53 @@
+"""One-time (idempotent) bootstrap of the knowledge base from existing posts.
+
+Reads the 12 real posts from the site repo — registry metadata (posts.ts) plus
+each `<slug>.mdx` body — and embeds them into the KB so the very first generated
+post is already checked against everything that exists. Safe to run repeatedly;
+it skips slugs already in the ledger.
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from config import CONFIG
+from facts.snapshot import _resolve_site_dir, build_snapshot
+from knowledge.store import KnowledgeBase
+
+log = logging.getLogger("agent.kb.ingest")
+
+
+def _read_body(site_dir: Path, slug: str) -> str:
+    path = site_dir / CONFIG.blog_content_rel / f"{slug}.mdx"
+    return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+
+def ingest_existing(site_dir: Path | None = None) -> KnowledgeBase:
+    site_dir = site_dir or _resolve_site_dir()
+    snap = build_snapshot(site_dir)
+    kb = KnowledgeBase()
+
+    added = 0
+    for post in snap.existing_posts:
+        slug = post["slug"]
+        if kb.has_slug(slug):
+            continue
+        body = _read_body(site_dir, slug)
+        kb.add(
+            slug=slug,
+            title=post["title"],
+            description=post["description"],
+            tags=post["tags"],
+            body_text=body,
+        )
+        added += 1
+
+    log.info("ingest complete: +%d posts, KB now has %d entries", added, len(kb))
+    return kb
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    kb = ingest_existing()
+    print(f"KB entries: {len(kb)}")
+    print("slugs:", kb.all_slugs())

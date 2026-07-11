@@ -1,0 +1,134 @@
+# WizCodes Blog Agent
+
+An autonomous **LangGraph** agent that writes and publishes genuinely human-like,
+SEO-optimized blog posts to the WizCodes site — **1–2 posts/day at randomized
+times**, each one **unique** (checked against a knowledge base of every existing
+post), grounded in the studio's **real facts** (no hallucinated numbers/clients),
+and shipped straight into the site's private GitHub repo.
+
+Only recurring cost: the **ClaudeStore proxy API key**. Everything else (Render
+cron, GitHub Actions, Firebase Hosting, local embeddings) is free.
+
+---
+
+## How it works
+
+```
+Render Cron (hourly, free)
+        │  "is a post due this hour?" (randomized daily plan)
+        ▼
+LangGraph pipeline (Sonnet 4.6 via ClaudeStore proxy)
+  load facts → pick topic → [uniqueness gate] → outline → write
+    → fact-check → [MDX validate] → humanize → registry
+    → [final uniqueness] → publish
+        │  commit .mdx + registry entry, push to main
+        ▼
+GitHub Action → npm run build → firebase deploy  (site goes live)
+```
+
+- **Self-correcting**: fact-check and MDX-validation loop back to the writer; a run
+  that can't produce a clean, unique, truthful post **aborts and publishes nothing**.
+- **Uniqueness**: local MiniLM embeddings (zero API cost). The KB is rebuilt from the
+  site repo every run, so it's correct even on Render's stateless free tier.
+- **Grounded**: every prompt carries a snapshot of real WizCodes facts (services,
+  projects, open-source, existing posts) pulled from the site repo.
+
+See the architecture detail and node-by-node design in the chat plan / `graph/`.
+
+---
+
+## Project layout
+
+```
+agent/
+  main.py               # cron entrypoint: publish only if a slot is due (--now / --plan)
+  run_once.py           # generate one post (dry-run writes to output/)
+  config.py             # all env-driven config
+  llm/                  # proxy client (CLI UA + retries) + output sanitizer
+  graph/                # LangGraph state, nodes, and wiring
+  knowledge/            # local-embedding KB (store + ingest) — uniqueness engine
+  facts/                # real-WizCodes facts snapshot (anti-hallucination grounding)
+  seo/                  # deterministic MDX/BLOG_FORMAT validator + reading time
+  publish/              # git publisher (commit + push to the private site repo)
+  prompts/              # all LLM prompts (phrased to avoid the proxy's injection guard)
+  scheduler/            # human-like randomized daily plan (free-cron friendly)
+  render.yaml           # Render Blueprint (free cron job)
+```
+
+---
+
+## Local setup & testing
+
+```bash
+cd agent
+python -m venv .venv && .venv/Scripts/activate      # (venv already present)
+pip install -r requirements.txt
+cp .env.example .env                                 # fill in the proxy key
+python -m knowledge.ingest                           # embed the 12 existing posts
+python run_once.py                                   # DRY_RUN=1 → writes to output/
+```
+
+Inspect `output/<slug>.mdx`, `output/<slug>.summary.json` (similarity scores,
+revisions, humanize score, validation warnings). Nothing is pushed in dry-run.
+
+Useful commands:
+```bash
+python main.py --plan     # show today's randomized publish plan
+python main.py --now      # force one generation now (ignores the schedule)
+python main.py            # cron mode: publish only if a slot is due right now
+```
+
+---
+
+## Going live — 3 one-time setups
+
+### 1. GitHub token (lets the agent commit posts)
+Create a **fine-grained Personal Access Token** scoped to **only** the
+`dkcodes121617/wizcodes_main_website` repo, permission **Contents: Read and write**.
+This is `GITHUB_TOKEN`.
+
+### 2. GitHub Action → Firebase (builds + deploys on push)
+The workflow lives at `wizcodes_next/.github/workflows/deploy.yml`. In that repo's
+**Settings → Secrets and variables → Actions**, add:
+- `FIREBASE_SERVICE_ACCOUNT` — a Firebase service-account JSON with Hosting deploy
+  rights (Firebase console → Project settings → Service accounts → generate key).
+
+Get it once with the CLI if you prefer: `firebase init hosting:github` wires this
+up automatically. After this, any push that touches `src/**` builds and deploys.
+
+### 3. Render Cron Job (runs the agent, free)
+- Push this `agent/` folder to a GitHub repo (its own repo is fine).
+- Render → **New → Blueprint** → point at the repo (`render.yaml` is detected).
+- Set the secret env vars in the dashboard (marked `sync:false`): `ANTHROPIC_API_KEY`,
+  `GITHUB_TOKEN`. The rest have defaults in `render.yaml`.
+- Set `DRY_RUN=0` to publish for real (start with `1` to watch it run safely).
+
+That's it. The cron fires hourly, publishes when the plan says so, and the site
+updates itself.
+
+---
+
+## One-time SEO launch step (optional but recommended)
+Verify the site in **Google Search Console** and submit `https://wizcodes.site/sitemap.xml`
+**once**. After that, discovery is automatic — the sitemap regenerates on every
+build and the `/blog` index links each new post, so **no manual pinging is ever
+needed**.
+
+---
+
+## Guardrails baked in
+- **Never fabricates**: a fact-check node removes any claim not supported by the
+  real facts snapshot; unrecoverable → abort.
+- **Never duplicates**: topic-level and body-level cosine gates vs. the KB; a
+  near-duplicate → abort (publishes nothing).
+- **Never ships broken MDX**: a deterministic validator mirrors the blog contract
+  (no H1/frontmatter, required components, no raw `<`/`{` in prose, valid internal
+  links); failures loop back to the writer.
+- **Anti-flag cadence**: ≤2 posts/day, randomized times, occasional zero-days.
+- **Proxy quirks handled**: CLI User-Agent (or Cloudflare 403s) and
+  injection-guard-safe prompt phrasing.
+
+## Tuning
+Everything is env-driven (`.env` / Render vars): `MAX_POSTS_PER_DAY`,
+`AVG_POSTS_PER_DAY`, publish window, `MIN_GAP_HOURS`, `TOPIC_SIM_THRESHOLD`,
+`BODY_SIM_THRESHOLD`, `SCHEDULE_TZ`.
