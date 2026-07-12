@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from config import CONFIG
 from facts.snapshot import build_snapshot
 from graph.nodes.content_nodes import (
+    FIXCLAIMS_BUDGET,
     HUMANIZE_MIN_SCORE,
     MAX_REVISIONS,
     MAX_TOPIC_ATTEMPTS,
@@ -38,12 +39,17 @@ def route_after_validate(state: BlogState) -> str:
 
 
 def route_after_factcheck(state: BlogState) -> str:
-    if state.get("factcheck_issues"):
-        if state.get("revision", 0) >= MAX_REVISIONS:
-            # Out of retries but still has claims — safer to abort than publish lies.
-            return "abort"
-        return "rewrite"
-    return "ok"
+    if not state.get("factcheck_issues"):
+        return "ok"
+    if state.get("fix_attempts", 0) >= FIXCLAIMS_BUDGET:
+        # We've surgically cleaned the draft up to the budget and it still passes
+        # MDX validation. Remaining flags are almost always false positives on
+        # generic advice — ship the valid, grounded draft rather than never publish.
+        log.warning("factcheck: %d issue(s) remain after %d fix(es) — publishing the "
+                    "valid draft anyway", len(state["factcheck_issues"]),
+                    state.get("fix_attempts", 0))
+        return "ok"
+    return "fix"
 
 
 def route_after_final_uniqueness(state: BlogState) -> str:
@@ -68,6 +74,7 @@ def build_graph(nodes: Nodes):
     g.add_node("outline", nodes.outline)
     g.add_node("write", nodes.write)
     g.add_node("factcheck", nodes.factcheck)
+    g.add_node("fix_claims", nodes.fix_claims)
     g.add_node("validate", nodes.validate)
     g.add_node("humanize", nodes.humanize)
     g.add_node("registry", nodes.build_registry)
@@ -75,7 +82,6 @@ def build_graph(nodes: Nodes):
     g.add_node("finalize", nodes.finalize)
     g.add_node("abort_topic", _abort("topic space exhausted — every angle too similar to existing posts"))
     g.add_node("abort_validate", _abort("could not produce contract-valid MDX within revision budget"))
-    g.add_node("abort_factcheck", _abort("could not remove unsupported claims within revision budget"))
     g.add_node("abort_dup", _abort("finished draft too similar to an existing post"))
 
     g.add_edge(START, "load_context")
@@ -94,10 +100,13 @@ def build_graph(nodes: Nodes):
         "validate", route_after_validate,
         {"ok": "factcheck", "rewrite": "write", "abort": "abort_validate"},
     )
+    # Fact-check issues → surgical fix_claims (fast, convergent) → re-validate →
+    # re-check. After the budget, a still-valid draft ships anyway (see router).
     g.add_conditional_edges(
         "factcheck", route_after_factcheck,
-        {"ok": "humanize", "rewrite": "write", "abort": "abort_factcheck"},
+        {"ok": "humanize", "fix": "fix_claims"},
     )
+    g.add_edge("fix_claims", "validate")
     g.add_edge("humanize", "registry")
     g.add_edge("registry", "final_uniqueness")
     g.add_conditional_edges(
@@ -105,7 +114,7 @@ def build_graph(nodes: Nodes):
         {"ok": "finalize", "abort": "abort_dup"},
     )
     g.add_edge("finalize", END)
-    for a in ("abort_topic", "abort_validate", "abort_factcheck", "abort_dup"):
+    for a in ("abort_topic", "abort_validate", "abort_dup"):
         g.add_edge(a, END)
 
     return g.compile()

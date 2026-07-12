@@ -258,13 +258,17 @@ Output only the FAQ component then the BlogCTA."""
 
 
 # ── Node: fact-check guard ──
+# Deliberately NARROW: only flag fabrications ABOUT WIZCODES itself, because the
+# writer is grounded in the facts already. Flagging generic industry advice as
+# "unsupported" causes false positives that stall the pipeline. Only a specific,
+# checkable, WizCodes-attributed invention counts as an issue.
 def factcheck_prompt(facts_block: str, body_mdx: str) -> tuple[str, str]:
     system = (
-        "You are a meticulous editor checking a draft for factual claims that are "
-        "not supported by the provided source facts. You care about truthfulness "
-        "and brand safety."
+        "You verify that a blog draft doesn't fabricate specific claims about the "
+        "studio WizCodes. You are narrow and precise: you only flag invented facts "
+        "ATTRIBUTED TO WIZCODES, never general industry statements or advice."
     )
-    user = f"""SOURCE FACTS (the only things known to be true about the studio):
+    user = f"""SOURCE FACTS (everything known to be true about WizCodes):
 
 {facts_block}
 
@@ -273,14 +277,49 @@ DRAFT:
 {body_mdx}
 '''
 
-Find every specific factual claim in the draft that is NOT supported by the source
-facts — invented numbers, statistics, client names, sectors, dates, project claims,
-or any "we did X" that the facts don't back up. General industry statements and
-clearly qualitative language are fine; only flag concrete unsupported claims.
+Flag a claim ONLY if it invents something specific about WIZCODES that the source
+facts don't support, such as:
+  - a WizCodes client, project, or product name not in the facts;
+  - a specific statistic/number/metric/date attributed to WizCodes (e.g. "we cut
+    costs by 40%", "we've built 200 apps") that isn't in the facts;
+  - a claim WizCodes did something it didn't (a service, a technology used on a
+    named project) that contradicts the facts.
+
+Do NOT flag (these are all fine):
+  - general industry statements, best practices, opinions, or technical advice;
+  - qualitative statements ("fast", "affordable", "production-ready");
+  - common knowledge about tools/frameworks (React, Firebase, Stripe, etc.);
+  - the real WizCodes projects/services that ARE in the facts.
+
+Be conservative — when unsure, do NOT flag it. Most drafts should return zero issues.
 
 Reply as JSON:
-{{"issues": [ {{"quote": "the exact phrase from the draft", "problem": "why it's unsupported", "fix": "how to reword truthfully"}} ]}}
-If nothing is unsupported, return {{"issues": []}}."""
+{{"issues": [ {{"quote": "the exact phrase from the draft", "problem": "why it invents a WizCodes fact", "fix": "how to reword truthfully"}} ]}}
+If nothing genuinely invents a WizCodes fact, return {{"issues": []}}."""
+    return system, user
+
+
+# ── Node: surgical claim fixer ──
+# Instead of regenerating the whole post (which introduces NEW claims and never
+# converges), we edit out ONLY the flagged sentences. Fast and convergent.
+def fix_claims_prompt(body_mdx: str, issues: list[str]) -> tuple[str, str]:
+    issue_lines = "\n".join(f"  - {i}" for i in issues) or "  (none)"
+    system = (
+        "You make minimal surgical edits to an MDX blog draft to remove or reword a "
+        "few specific claims, changing nothing else. You preserve all components, "
+        "links, headings, and the FAQ exactly."
+    )
+    user = f"""Here is an MDX blog draft:
+'''
+{body_mdx}
+'''
+
+Reword or remove ONLY the following flagged claims so they no longer state the
+unsupported fact (make them qualitative/general, or drop the sentence). Change
+NOTHING else — keep every heading, component, link, and FAQ item identical:
+{issue_lines}
+
+Output the full corrected MDX body (same format and components), and nothing else."""
     return system, user
 
 

@@ -27,7 +27,8 @@ from seo.mdx_validator import reading_minutes, validate_mdx
 log = logging.getLogger("agent.nodes")
 
 MAX_TOPIC_ATTEMPTS = 4
-MAX_REVISIONS = 3
+MAX_REVISIONS = 2          # full rewrites for MDX-contract errors (rare)
+FIXCLAIMS_BUDGET = 2      # surgical fact-check fixes before we ship a valid draft
 HUMANIZE_MIN_SCORE = 70
 
 
@@ -155,6 +156,29 @@ class Nodes:
         formatted = [f"{i.get('quote','')} -> {i.get('fix','')}" for i in issues]
         log.info("  factcheck found %d issue(s)", len(formatted))
         return {"factcheck_issues": formatted}
+
+    # ── surgical fact-check fix ──
+    # Remove ONLY the flagged claims, in one fast call. Converges (unlike a full
+    # rewrite, which introduces fresh claims). Best-effort: on a proxy error or a
+    # revision that breaks validation, keep the prior (valid) body.
+    def fix_claims(self, state: BlogState) -> dict:
+        attempts = state.get("fix_attempts", 0) + 1
+        issues = state.get("factcheck_issues", [])
+        log.info("node: fix_claims (attempt %d, %d issue(s))", attempts, len(issues))
+        try:
+            system, user = P.fix_claims_prompt(state["body_mdx"], issues)
+            raw = self.llm.complete(system=system, user=user, max_tokens=4000, temperature=0.3)
+        except (LLMError, LLMTransient) as e:
+            log.warning("  fix_claims proxy error (%s); keeping prior body", e)
+            return {"fix_attempts": attempts}
+        out: dict = {"fix_attempts": attempts, "factcheck_issues": []}
+        candidate = sanitize_prose(raw)
+        report = validate_mdx(candidate, known_slugs=set(state.get("known_slugs", [])))
+        if report.ok and len(candidate) > 400:
+            out["body_mdx"] = candidate
+        else:
+            log.info("  fix_claims result failed validation; keeping prior body")
+        return out
 
     # ── validate (deterministic) ──
     def validate(self, state: BlogState) -> dict:

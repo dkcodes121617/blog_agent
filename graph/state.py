@@ -49,6 +49,7 @@ class BlogState(TypedDict, total=False):
 
     # ── control / bookkeeping ──
     revision: int               # how many write→validate loops so far
+    fix_attempts: int           # how many surgical fact-check fixes so far
     topic_attempts: int         # how many topic re-picks so far
     status: str                 # running | aborted | ready | published
     abort_reason: str
