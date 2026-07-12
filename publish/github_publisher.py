@@ -64,9 +64,14 @@ def ensure_repo() -> Repo:
         repo.remotes.origin.set_url(_authed_remote())
         repo.git.checkout(CONFIG.github_branch)
         repo.remotes.origin.pull(CONFIG.github_branch)
-        return repo
-    log.info("cloning %s into %s", CONFIG.github_repo, d)
-    return Repo.clone_from(_authed_remote(), d, branch=CONFIG.github_branch, depth=1)
+    else:
+        log.info("cloning %s into %s", CONFIG.github_repo, d)
+        repo = Repo.clone_from(_authed_remote(), d, branch=CONFIG.github_branch, depth=1)
+    # CI runners (GitHub Actions) have NO global git identity, so a commit would
+    # fail with "empty ident name". Set a repo-local committer identity = the bot.
+    repo.git.config("user.email", CONFIG.git_author_email)
+    repo.git.config("user.name", CONFIG.git_author_name)
+    return repo
 
 
 def _render_registry_entry(state: dict, iso_date: str) -> str:
@@ -130,13 +135,12 @@ def publish_post(state: dict, kb: KnowledgeBase | None = None) -> str:
         raise RuntimeError("registry insertion sanity check failed")
     registry_path.write_text(new_ts, encoding="utf-8")
 
-    # Commit + push.
+    # Commit + push. Committer identity comes from the repo-local config set in
+    # ensure_repo(); author defaults to the same, so no --author flag is needed.
     repo.git.add(mdx_rel, CONFIG.posts_registry_rel)
-    author = f"{CONFIG.git_author_name} <{CONFIG.git_author_email}>"
     repo.git.commit(
         "-m", f"blog: {state['title']}",
         "-m", f"Automated post. keyword={state.get('primary_keyword','')}",
-        "--author", author,
     )
     log.info("pushing to %s", CONFIG.github_branch)
     repo.remotes.origin.push(CONFIG.github_branch)
