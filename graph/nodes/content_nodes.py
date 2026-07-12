@@ -15,6 +15,7 @@ Conditional edges (in build.py) implement the self-correcting loops:
 from __future__ import annotations
 
 import logging
+import re
 
 from config import CONFIG
 from graph.state import BlogState
@@ -249,7 +250,6 @@ class Nodes:
 
 # ── helpers ──
 def _slugify(text: str) -> str:
-    import re
     s = text.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
     return s[:70].strip("-")
