@@ -19,6 +19,8 @@ class BlogState(TypedDict, total=False):
     angle: str                  # the specific take/thesis
     audience: str
     rationale: str              # why this topic ranks / is valuable
+    archetype: str              # cost_breakdown | vs_comparison | decision_framework | mistake_guide
+    intent_type: str            # commercial | informational | navigational
 
     # ── uniqueness ──
     topic_similarity: float     # max cosine of topic vs KB

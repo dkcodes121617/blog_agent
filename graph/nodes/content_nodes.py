@@ -53,19 +53,57 @@ class Nodes:
         }
 
     # ── topic ──
+    _DEVELOPER_SIGNALS = (
+        "how to build", "how to create", "how to implement", "how to set up",
+        "step-by-step", "tutorial", "implementation guide", "developer guide",
+        "code", "library", "framework", "sdk", "api integration", "github",
+    )
+
     def pick_topic(self, state: BlogState) -> dict:
         attempts = state.get("topic_attempts", 0) + 1
         log.info("node: pick_topic (attempt %d)", attempts)
-        recent = state.get("known_slugs", [])
+        recent = list(state.get("known_slugs", []))
         # Include the just-rejected topic so the model doesn't re-propose it.
         if state.get("primary_keyword"):
             recent = recent + [state["primary_keyword"]]
         system, user = P.topic_prompt(self.facts_block, recent)
         data = self.llm.complete_json(system=system, user=user, max_tokens=1000)
+
+        keyword = data.get("primary_keyword", "").strip()
+        angle = data.get("angle", "").strip()
+        intent_type = data.get("intent_type", "commercial").strip().lower()
+        archetype = data.get("archetype", "decision_framework").strip().lower()
+
+        # Guard: reject developer-facing topics by scanning keyword + angle for
+        # implementation signals. Log and force a re-pick (counted as an attempt).
+        combined_lower = (keyword + " " + angle).lower()
+        is_dev_facing = intent_type == "informational" and any(
+            sig in combined_lower for sig in self._DEVELOPER_SIGNALS
+        )
+        if is_dev_facing:
+            log.info(
+                "  pick_topic: rejected developer-facing topic %r (intent=%s) — re-picking",
+                keyword, intent_type,
+            )
+            # Push the rejected keyword into recent so it won't be re-proposed.
+            return {
+                "primary_keyword": keyword,  # keep for recent-list carry-forward
+                "angle": angle,
+                "audience": data.get("audience", "").strip(),
+                "archetype": archetype,
+                "intent_type": intent_type,
+                "rationale": data.get("rationale", "").strip(),
+                "topic_attempts": attempts,
+                # Force topic similarity high so the uniqueness router re-picks.
+                "topic_similarity": 0.0,  # will be re-evaluated by check_topic
+            }
+
         return {
-            "primary_keyword": data.get("primary_keyword", "").strip(),
-            "angle": data.get("angle", "").strip(),
+            "primary_keyword": keyword,
+            "angle": angle,
             "audience": data.get("audience", "").strip(),
+            "archetype": archetype,
+            "intent_type": intent_type,
             "rationale": data.get("rationale", "").strip(),
             "topic_attempts": attempts,
         }
@@ -79,12 +117,13 @@ class Nodes:
 
     # ── outline ──
     def outline(self, state: BlogState) -> dict:
-        log.info("node: outline for %r", state["primary_keyword"])
+        log.info("node: outline for %r (archetype=%s)", state["primary_keyword"], state.get("archetype", "?"))
         system, user = P.outline_prompt(
             self.facts_block, state["primary_keyword"], state["angle"],
-            state.get("audience", ""), state.get("related_slugs", []),
+            state.get("audience", ""), state.get("archetype", "decision_framework"),
+            state.get("related_slugs", []),
         )
-        data = self.llm.complete_json(system=system, user=user, max_tokens=900)
+        data = self.llm.complete_json(system=system, user=user, max_tokens=1100)
         return {"outline": data}
 
     # ── write (SECTIONED — many short calls instead of one long one) ──
@@ -132,20 +171,46 @@ class Nodes:
 
     @staticmethod
     def _assign_sections(outline: dict, h2s: list[str]) -> list[dict]:
-        """Distribute the illustration + internal links across the H2 sections so
-        each section gets at most one of each (keeps every call small and focused)."""
+        """Distribute up to 2 illustrations + internal links across H2 sections.
+
+        primary_illustration → placed in section index 1 (second section, or first
+          if only one section exists) to give the post an early visual anchor.
+        secondary_illustration → placed in the last section as a closing visual.
+        If primary == secondary index (1-section post), only primary is emitted.
+        Internal links are spread one-per-section in order.
+        """
         n = len(h2s)
-        assignments = [dict() for _ in range(n)]
-        # Illustration → the second section if it exists, else the first.
-        if outline.get("illustration"):
-            assignments[min(1, n - 1)]["illustration"] = outline["illustration"]
+        assignments: list[dict] = [dict() for _ in range(n)]
+
+        primary_idx = min(1, n - 1)
+        secondary_idx = n - 1  # last section
+
+        primary_ill = outline.get("primary_illustration")
+        secondary_ill = outline.get("secondary_illustration")
+
+        # Fallback: legacy single-illustration field (backwards compat with older outlines)
+        if not primary_ill and outline.get("illustration"):
+            primary_ill = outline["illustration"]
+
+        if primary_ill and isinstance(primary_ill, dict):
+            assignments[primary_idx]["illustration"] = primary_ill
+
+        if secondary_ill and isinstance(secondary_ill, dict) and secondary_idx != primary_idx:
+            # Only assign the secondary if it's in a different section than the primary.
+            assignments[secondary_idx]["illustration"] = secondary_ill
+
         # Internal links → one per section, in order.
-        links = [l for l in (outline.get("internal_links") or []) if isinstance(l, dict) and l.get("path")]
+        links = [
+            lk for lk in (outline.get("internal_links") or [])
+            if isinstance(lk, dict) and lk.get("path")
+        ]
         for i, link in enumerate(links):
             assignments[i % n].setdefault("link", link)
+
         # A single tip callout on the middle section for texture.
         if n >= 2:
             assignments[n // 2]["callout"] = True
+
         return assignments
 
     # ── factcheck ──

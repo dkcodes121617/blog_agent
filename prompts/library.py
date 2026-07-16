@@ -12,6 +12,83 @@ Each function returns (system, user).
 """
 from __future__ import annotations
 
+# ── Archetypes ──────────────────────────────────────────────────────────────
+# Four content archetypes, each with its own H2 scaffold, required illustration
+# type, and intro hook style. The archetype is picked at topic-selection time and
+# threads through every subsequent node.
+
+ARCHETYPES = ("cost_breakdown", "vs_comparison", "decision_framework", "mistake_guide")
+
+# Archetype → natural H2 scaffold (template strings, not final titles).
+_H2_PATTERNS: dict[str, list[str]] = {
+    "cost_breakdown": [
+        "What actually drives the cost of [topic]",
+        "Where most budgets get wasted",
+        "A realistic cost breakdown",
+        "How to get more for less without cutting corners",
+        "When to invest more — and when not to",
+    ],
+    "vs_comparison": [
+        "What each option actually offers",
+        "Where [option A] wins",
+        "Where [option B] wins",
+        "The real decision criteria most guides skip",
+        "How to pick the right one for your situation",
+    ],
+    "decision_framework": [
+        "Why this decision is harder than it looks",
+        "The key variables that change the answer",
+        "A practical decision framework",
+        "Common mistakes that lead to the wrong choice",
+        "How to validate your decision before committing",
+    ],
+    "mistake_guide": [
+        "The most expensive mistake founders make with [topic]",
+        "Why conventional advice on [topic] backfires",
+        "What to do instead",
+        "How to spot these mistakes before they cost you",
+        "A smarter approach from the ground up",
+    ],
+}
+
+# Archetype → preferred primary illustration type.
+_PRIMARY_ILLUSTRATION: dict[str, str] = {
+    "cost_breakdown": "BarChart",
+    "vs_comparison": "CompareDiagram",
+    "decision_framework": "DecisionTree",
+    "mistake_guide": "CompareDiagram",
+}
+
+# Archetype → preferred secondary illustration type.
+_SECONDARY_ILLUSTRATION: dict[str, str] = {
+    "cost_breakdown": "StatGrid",
+    "vs_comparison": "BarChart",
+    "decision_framework": "Timeline",
+    "mistake_guide": "FlowDiagram",
+}
+
+# Archetype → intro hook guidance (how the lead paragraph should open).
+_INTRO_HOOK: dict[str, str] = {
+    "cost_breakdown": (
+        "Open with the moment a founder or business owner got a surprise bill or a "
+        "wildly varying quote. Name the real cost range, then promise to explain what "
+        "actually drives it."
+    ),
+    "vs_comparison": (
+        "Open with the painful situation of having to choose between two options with "
+        "conflicting advice online. Acknowledge the tension, then promise a clear, "
+        "opinionated framework."
+    ),
+    "decision_framework": (
+        "Open with a costly mistake that happens when people skip this decision or rush "
+        "it. Set up why a clear framework matters more than gut feeling here."
+    ),
+    "mistake_guide": (
+        "Open by naming the mistake bluntly — the one most founders make at exactly this "
+        "stage. Make it feel recognisable, not preachy. Then promise the fix."
+    ),
+}
+
 # The studio persona reused across writing nodes. Warm, senior, honest — matches
 # BLOG_FORMAT.md voice rules.
 STUDIO_PERSONA = (
@@ -23,77 +100,118 @@ STUDIO_PERSONA = (
 )
 
 
-# ── Node: topic strategist ──
+# ── Node: topic strategist ──────────────────────────────────────────────────
 def topic_prompt(facts_block: str, avoid_recent: list[str]) -> tuple[str, str]:
     system = (
-        "You are an SEO content strategist for a software development studio. You "
-        "pick blog topics that can realistically rank and attract qualified buyers "
-        "(startup founders, SMBs in the US/UK/Canada/Europe looking for web, mobile, "
-        "or AI development)."
+        "You are a lead generation strategist for a B2B software studio. Your job "
+        "is to pick blog topics that attract business owners, startup founders, and "
+        "non-technical decision-makers who are evaluating software development options. "
+        "You write for buyers, not builders."
     )
     avoid = "\n".join(f"  - {s}" for s in avoid_recent) or "  (none yet)"
+    archetype_list = "\n".join(f"  - {a}" for a in ARCHETYPES)
     user = f"""Here are the studio's real facts and its existing blog coverage:
 
 {facts_block}
 
-Recently generated topics to avoid repeating:
+Recently covered topics to avoid repeating:
 {avoid}
 
-Propose ONE fresh, high-value blog topic that:
-  - targets a specific primary keyword a real buyer would search (commercial or
-    informational intent), not covered by the existing posts above;
-  - fits the studio's services (web / mobile / AI) and can be written from real
-    experience with the projects listed;
-  - is specific and ownable, not a broad generic listicle.
+Propose ONE blog topic for a BUSINESS OWNER or STARTUP FOUNDER who is evaluating or
+buying software services — someone who controls a budget but is not a developer.
+
+The topic should target a keyword with commercial or navigational search intent:
+cost analyses, vendor comparisons, ROI breakdowns, build-vs-buy decisions, industry
+guides, common business mistakes, or decision frameworks.
+
+Do NOT propose:
+  - Developer tutorials ("how to build X", "implementing Y", "a guide to Z library")
+  - Technical deep-dives aimed at engineers or developers
+  - "How to code", "how to set up", "step-by-step technical implementation" posts
+  - Posts where the primary audience would be a software developer, not a business buyer
+
+Required archetype — pick exactly one:
+{archetype_list}
+
+  cost_breakdown   → cost/ROI/pricing breakdowns, budget guides, "what does X really cost"
+  vs_comparison    → X vs Y comparisons, vendor/tool evaluations, tradeoff analyses
+  decision_framework → decision guides, "how to choose", evaluation criteria, checklists
+  mistake_guide    → common mistakes, pitfalls, "don't make this error", cautionary guides
 
 Reply as JSON:
-{{"primary_keyword": string, "angle": string (the specific thesis/take, one sentence),
- "audience": string, "rationale": string (why this can rank + convert)}}"""
+{{"primary_keyword": string (the exact phrase a buyer would search),
+  "angle": string (the specific thesis/take, one sentence, written for a business buyer),
+  "audience": string (be specific: e.g. "early-stage startup founder considering building an app"),
+  "archetype": string (one of the four above),
+  "intent_type": "commercial" | "informational" | "navigational",
+  "rationale": string (why this keyword has buyer intent + why WizCodes can write it credibly)}}"""
     return system, user
 
 
-# ── Node: SEO outliner ──
+# ── Node: SEO outliner ──────────────────────────────────────────────────────
 def outline_prompt(
-    facts_block: str, primary_keyword: str, angle: str, audience: str,
+    facts_block: str,
+    primary_keyword: str,
+    angle: str,
+    audience: str,
+    archetype: str,
     related_slugs: list[str],
 ) -> tuple[str, str]:
     system = STUDIO_PERSONA + (
         " Right now you are outlining a post before writing it, thinking about "
-        "search intent and internal linking."
+        "search intent, business-buyer framing, and internal linking."
     )
     related = ", ".join(f"/blog/{s}" for s in related_slugs) or "(none especially close)"
+
+    # Build archetype-specific guidance block.
+    h2_pattern = _H2_PATTERNS.get(archetype, _H2_PATTERNS["decision_framework"])
+    h2_guidance = "\n".join(f"  {i+1}. {h}" for i, h in enumerate(h2_pattern))
+    primary_ill = _PRIMARY_ILLUSTRATION.get(archetype, "CompareDiagram")
+    secondary_ill = _SECONDARY_ILLUSTRATION.get(archetype, "BarChart")
+    hook_guidance = _INTRO_HOOK.get(archetype, "Open with a concrete business problem.")
+
     user = f"""Studio facts (ground truth — reference real projects, never invent):
 
 {facts_block}
 
-Plan a blog post.
+Plan a blog post for a BUSINESS AUDIENCE (founders, operators, decision-makers — not developers).
 Primary keyword: "{primary_keyword}"
 Angle: {angle}
 Audience: {audience}
+Archetype: {archetype}
 
-The most topically-related existing posts (link to 1-2 of these for a topic cluster):
+H2 pattern to adapt for this archetype (adapt the placeholders to the specific topic):
+{h2_guidance}
+
+Intro hook style: {hook_guidance}
+
+Most topically-related existing posts (link to 1-2 for topic clustering):
 {related}
 
 Produce a JSON plan:
 {{
-  "working_title": string (natural, ~50-60 chars, includes the primary keyword),
-  "h2s": [3-5 strings, each a real question or claim, keyword-rich but natural],
-  "lsi_keywords": [5-8 semantic variants to weave in naturally],
+  "working_title": string (natural, ~50-60 chars, includes the primary keyword, sounds like a business article — no "how to build X"),
+  "h2s": [3-5 strings adapted from the archetype pattern above, keyword-rich but natural and buyer-facing],
+  "lsi_keywords": [5-8 semantic variants to weave in naturally — business terms, not technical jargon],
   "internal_links": [3-4 objects {{"path": "/services/... or /work/... or /blog/... or /contact", "anchor": string}}],
-  "illustration": {{"type": "FlowDiagram" | "CompareDiagram" | "BarChart", "purpose": string}},
+  "primary_illustration": {{"type": "{primary_ill}", "purpose": string, "data_hint": string (what data/content to put in it)}},
+  "secondary_illustration": {{"type": "{secondary_ill}", "purpose": string, "data_hint": string}},
   "real_projects_to_cite": [names from the facts that genuinely fit this topic]
 }}
 Only use internal link paths that exist in the facts above."""
     return system, user
 
 
-# ── Node: draft writer ──
+# ── Node: draft writer (single monolithic call — kept for reference) ────────
 def write_prompt(facts_block: str, state: dict) -> tuple[str, str]:
     outline = state["outline"]
+    archetype = state.get("archetype", "decision_framework")
+    hook = _INTRO_HOOK.get(archetype, "Open with a concrete business problem.")
     system = STUDIO_PERSONA + (
         " You write in MDX for the studio's blog, which has a fixed component kit."
     )
-    user = f"""Write a complete blog post body in MDX, following the studio's blog format.
+    user = f"""Write a complete blog post body in MDX, for a BUSINESS AUDIENCE (founders,
+operators, decision-makers — not developers).
 
 STUDIO FACTS (ground every specific claim in these — do not invent numbers,
 clients, sectors, or statistics; if you don't have a real number, speak
@@ -104,25 +222,37 @@ qualitatively):
 POST PLAN:
   primary keyword: {state['primary_keyword']}
   angle: {state['angle']}
+  archetype: {archetype}
   working title: {outline.get('working_title')}
   H2 sections: {outline.get('h2s')}
   semantic keywords to weave in: {outline.get('lsi_keywords')}
   internal links to include: {outline.get('internal_links')}
-  suggested illustration: {outline.get('illustration')}
+  primary illustration: {outline.get('primary_illustration')}
+  secondary illustration: {outline.get('secondary_illustration')}
   real projects you may cite by name: {outline.get('real_projects_to_cite')}
 
+INTRO HOOK for archetype "{archetype}": {hook}
+
 FORMAT RULES (this blog's contract):
-  - Start with a 2-3 sentence lead paragraph (no heading) that hooks the reader,
-    names the problem, and uses the primary keyword naturally.
-  - Then a <KeyTakeaways points={{["...", "...", "..."]}} /> with 3-5 short points.
-  - Then the H2 sections (## ...). Use **bold**, bullet lists, and the occasional
+  - Start with a 2-3 sentence lead paragraph (no heading) using the hook guidance above.
+    Name the problem in terms a business owner would recognise. Use the primary keyword naturally.
+  - Then a <KeyTakeaways points={{["...", "...", "..."]}} /> with 3-5 short business-outcome points
+    (what the reader will be able to decide or do after reading this).
+  - Then the H2 sections (## ...). Write for a non-technical business reader: explain the "why"
+    and "so what" first, then any mechanics. Use **bold**, bullet lists, and the occasional
     > blockquote for punch. Vary sentence length so it reads human.
-  - Include at least one illustration component with real data:
+  - Include the primary illustration component:
       <FlowDiagram caption="..." steps={{[{{ label: "...", sub: "..." }}, ...]}} />
-      or <CompareDiagram caption="..." columns={{[{{ title, tone: "good"|"bad", points: [...] }}]}} />
-      or <BarChart caption="..." unit="..." data={{[{{ label, value }}, ...]}} />
+      <CompareDiagram caption="..." columns={{[{{ title, tone: "good"|"bad"|"neutral", points: [...] }}]}} />
+      <BarChart caption="..." unit="..." data={{[{{ label, value }}, ...]}} />
+      <StatGrid caption="..." stats={{[{{ label, value, unit?, context? }}, ...]}} />
+      <Timeline caption="..." events={{[{{ date, label, description? }}, ...]}} />
+      <DecisionTree caption="..." question="..." yes={{{{ label, outcome }}}} no={{{{ label, outcome }}}} />
+  - Include the secondary illustration component in a later section.
   - Add 2-3+ internal markdown links from the plan, e.g. [text](/services/web).
-  - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As) and then <BlogCTA />.
+  - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As written for a
+    business buyer — questions about cost, time, risk, ownership — not technical questions)
+    and then <BlogCTA />.
 
 HARD MDX RULES:
   - No H1 (#) and no YAML frontmatter — the page adds the title itself.
@@ -130,13 +260,13 @@ HARD MDX RULES:
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".
   - Only use these components: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
-    BarChart, Figure, FAQ, BlogCTA. No imports.
+    BarChart, StatGrid, Timeline, DecisionTree, Figure, FAQ, BlogCTA. No imports.
 
 Write only the MDX body, starting with the lead paragraph."""
     return system, user
 
 
-# ── Sectioned writing (robust: many short calls instead of one long one) ──
+# ── Sectioned writing (robust: many short calls instead of one long one) ────
 # Each of these produces a SMALL chunk (~10-15s call) so a proxy 502/timeout on
 # any one chunk only costs that chunk, not the whole article. The write node
 # assembles the chunks into the final MDX deterministically.
@@ -146,27 +276,36 @@ _MDX_RULES = """HARD MDX RULES:
   - No markdown tables. Never write a raw '<' or '{' in ordinary prose (write
     "under 200 ms", not the symbol; "the data", not "the {data}").
   - Only these components exist: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
-    BarChart, Figure, FAQ, BlogCTA. No imports."""
+    BarChart, StatGrid, Timeline, DecisionTree, Figure, FAQ, BlogCTA. No imports."""
 
 
 def section_intro_prompt(facts_block: str, state: dict) -> tuple[str, str]:
     """Lead paragraph + KeyTakeaways only."""
     outline = state["outline"]
+    archetype = state.get("archetype", "decision_framework")
+    hook = _INTRO_HOOK.get(archetype, "Open with a concrete business problem.")
     system = STUDIO_PERSONA + " You write in MDX. Right now you write only the opening."
     user = f"""Write ONLY the opening of a studio blog post in MDX.
+The post is for a BUSINESS AUDIENCE (founders, operators, decision-makers — not developers).
 
 STUDIO FACTS (ground claims in these; never invent numbers/clients):
 {facts_block}
 
 Post: title "{outline.get('working_title')}", primary keyword
 "{state['primary_keyword']}", angle: {state['angle']}.
+Archetype: {archetype}
 It will cover these sections (do not write them now): {outline.get('h2s')}
 
+INTRO HOOK for this archetype: {hook}
+
 Write, in order:
-  1. A 2-3 sentence lead paragraph (no heading) that hooks the reader, names the
-     problem, and uses the primary keyword naturally in a human first-person voice.
+  1. A 2-3 sentence lead paragraph (no heading) using the hook guidance above.
+     Write for a business owner, not a developer — name a business problem (cost,
+     risk, wasted time, missed opportunity), not a technical challenge. Use the
+     primary keyword naturally.
   2. A <KeyTakeaways points={{["...", "...", "..."]}} /> with exactly 3-4 short
-     skimmable points (each under 16 words).
+     skimmable points (each under 16 words) framed as business outcomes —
+     what the reader will be able to decide, save, or avoid after reading this.
 
 Keep it tight: about 60-90 words total for the lead, then the component. Do not
 write any section headings or body sections — only the lead and the KeyTakeaways.
@@ -182,34 +321,46 @@ def section_body_prompt(
 ) -> tuple[str, str]:
     """One H2 section. `assignments` may include an illustration and/or a link."""
     outline = state["outline"]
-    # Tell this section what the OTHER sections cover, so it stays in its lane and
-    # doesn't repeat their thesis (sections are generated independently/blind).
+    archetype = state.get("archetype", "decision_framework")
+    # Tell this section what the OTHER sections cover, so it stays in its lane.
     others = [h for h in (outline.get("h2s") or []) if h != h2]
     others_line = "; ".join(others) if others else "(none)"
     extra = []
     if assignments.get("illustration"):
         ill = assignments["illustration"]
+        ill_type = ill.get("type", "CompareDiagram")
+        purpose = ill.get("purpose", "illustrate the point")
+        data_hint = ill.get("data_hint", "use relevant data from the facts or qualitative estimates")
+        syntax_examples = {
+            "FlowDiagram": '<FlowDiagram caption="..." steps={[{ label: "...", sub: "..." }, ...]} />',
+            "CompareDiagram": '<CompareDiagram caption="..." columns={[{ title, tone: "good"|"bad"|"neutral", points: [...] }]} />',
+            "BarChart": '<BarChart caption="..." unit="..." data={[{ label, value }, ...]} />',
+            "StatGrid": '<StatGrid caption="..." stats={[{ label: "...", value: "...", unit: "...", context: "..." }, ...]} />',
+            "Timeline": '<Timeline caption="..." events={[{ date: "...", label: "...", description: "..." }, ...]} />',
+            "DecisionTree": '<DecisionTree caption="..." question="..." yes={{ label: "...", outcome: "..." }} no={{ label: "...", outcome: "..." }} />',
+        }
+        syntax = syntax_examples.get(ill_type, syntax_examples["CompareDiagram"])
         extra.append(
-            f"Include one {ill.get('type','FlowDiagram')} component here with REAL data "
-            f"(purpose: {ill.get('purpose','illustrate the point')}). Use the exact syntax, e.g.\n"
-            "  <FlowDiagram caption=\"...\" steps={[{ label: \"...\", sub: \"...\" }, ...]} />\n"
-            "  <CompareDiagram caption=\"...\" columns={[{ title, tone: \"good\"|\"bad\", points: [...] }]} />\n"
-            "  <BarChart caption=\"...\" unit=\"...\" data={[{ label, value }, ...]} />"
+            f"Include one {ill_type} component here (purpose: {purpose}; data hint: {data_hint}). "
+            f"Use this exact syntax:\n  {syntax}"
         )
     if assignments.get("link"):
         lk = assignments["link"]
         extra.append(f'Include exactly one internal markdown link: [{lk.get("anchor","see this")}]({lk.get("path","/contact")}).')
     if assignments.get("callout"):
-        extra.append('You may add one <Callout variant="tip">...</Callout> if it genuinely helps.')
+        extra.append('You may add one <Callout variant="tip">...</Callout> if it genuinely helps a business reader.')
     extra_block = "\n".join(f"  - {e}" for e in extra) if extra else "  - (prose only for this section)"
 
     system = STUDIO_PERSONA + " You write in MDX. Right now you write only ONE section."
     user = f"""Write ONE section of a studio blog post in MDX.
+The post is for a BUSINESS AUDIENCE — write for the non-technical decision-maker,
+not for a developer. Explain business implications, costs, risks, and outcomes first.
 
 STUDIO FACTS (ground claims in these; never invent numbers/clients; you may cite
 these real projects if relevant: {outline.get('real_projects_to_cite')}):
 {facts_block}
 
+Archetype: {archetype}
 The post's primary keyword is "{state['primary_keyword']}". Weave in these semantic
 terms only where natural: {outline.get('lsi_keywords')}.
 
@@ -222,7 +373,7 @@ the overall thesis; assume the reader has read them.
 
 Then 130-200 words of body copy (aim for that length — concise, not padded; vary
 sentence length; use **bold**, a bullet list, or a > blockquote where it helps —
-human, specific, not generic). Requirements:
+human, specific, written for a business buyer). Requirements:
 {extra_block}
 
 {_MDX_RULES}
@@ -234,18 +385,21 @@ Start with the "## {h2}" line and output only this one section."""
 def section_closing_prompt(facts_block: str, state: dict) -> tuple[str, str]:
     """FAQ + BlogCTA."""
     outline = state["outline"]
+    archetype = state.get("archetype", "decision_framework")
     system = STUDIO_PERSONA + " You write in MDX. Right now you write only the closing."
     user = f"""Write ONLY the closing of a studio blog post in MDX.
 
-The post is about "{state['primary_keyword']}" ({state['angle']}). It already has an
-intro and these sections: {outline.get('h2s')}.
+The post is about "{state['primary_keyword']}" ({state['angle']}).
+Archetype: {archetype}. It already has an intro and these sections: {outline.get('h2s')}.
 
 STUDIO FACTS (ground answers in these; never invent):
 {facts_block}
 
 Write, in order:
   1. A <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> with exactly 3-4 real questions
-     people search about this topic, each with a self-contained 1-2 sentence answer.
+     a BUSINESS BUYER would search about this topic — questions about cost, time,
+     risk, ownership, or decision-making — NOT technical implementation questions.
+     Each answer should be self-contained in 1-2 sentences.
   2. A <BlogCTA /> on its own line (optionally with a short text="..." that invites
      the reader to describe their project / get a free prototype).
 
@@ -257,11 +411,8 @@ Output only the FAQ component then the BlogCTA."""
     return system, user
 
 
-# ── Node: fact-check guard ──
-# Deliberately NARROW: only flag fabrications ABOUT WIZCODES itself, because the
-# writer is grounded in the facts already. Flagging generic industry advice as
-# "unsupported" causes false positives that stall the pipeline. Only a specific,
-# checkable, WizCodes-attributed invention counts as an issue.
+# ── Node: fact-check guard ──────────────────────────────────────────────────
+# Deliberately NARROW: only flag fabrications ABOUT WIZCODES itself.
 def factcheck_prompt(facts_block: str, body_mdx: str) -> tuple[str, str]:
     system = (
         "You verify that a blog draft doesn't fabricate specific claims about the "
@@ -286,7 +437,7 @@ facts don't support, such as:
     named project) that contradicts the facts.
 
 Do NOT flag (these are all fine):
-  - general industry statements, best practices, opinions, or technical advice;
+  - general industry statements, best practices, opinions, or business advice;
   - qualitative statements ("fast", "affordable", "production-ready");
   - common knowledge about tools/frameworks (React, Firebase, Stripe, etc.);
   - the real WizCodes projects/services that ARE in the facts.
@@ -299,9 +450,7 @@ If nothing genuinely invents a WizCodes fact, return {{"issues": []}}."""
     return system, user
 
 
-# ── Node: surgical claim fixer ──
-# Instead of regenerating the whole post (which introduces NEW claims and never
-# converges), we edit out ONLY the flagged sentences. Fast and convergent.
+# ── Node: surgical claim fixer ──────────────────────────────────────────────
 def fix_claims_prompt(body_mdx: str, issues: list[str]) -> tuple[str, str]:
     issue_lines = "\n".join(f"  - {i}" for i in issues) or "  (none)"
     system = (
@@ -323,10 +472,7 @@ Output the full corrected MDX body (same format and components), and nothing els
     return system, user
 
 
-# ── Node: humanizer / critic ──
-# Returns the revised MDX as plain text (NOT wrapped in JSON) — round-tripping a
-# 1500-word body through a JSON string field is fragile (escaping/truncation). We
-# read the score from a trailing marker line instead.
+# ── Node: humanizer / critic ─────────────────────────────────────────────────
 def humanize_prompt(body_mdx: str) -> tuple[str, str]:
     system = STUDIO_PERSONA + (
         " You are reviewing a draft for how human and specific it reads, then "
@@ -350,7 +496,7 @@ and components). Then, on a final separate line, add a marker exactly like this:
     return system, user
 
 
-# ── Node: registry builder ──
+# ── Node: registry builder ───────────────────────────────────────────────────
 def registry_prompt(body_mdx: str, primary_keyword: str, existing_slugs: list[str]) -> tuple[str, str]:
     system = (
         "You write SEO metadata for a blog post: the slug, title, meta description, "
@@ -368,8 +514,8 @@ Slugs already taken (must not reuse): {existing_slugs}
 Produce the registry metadata as JSON:
 {{
   "slug": string (kebab-case, contains the primary keyword, unique vs the taken list),
-  "title": string (50-60 chars, includes the primary keyword, compelling),
-  "description": string (140-160 chars, includes the keyword and a concrete benefit),
+  "title": string (50-60 chars, includes the primary keyword, compelling, written for a business reader),
+  "description": string (140-160 chars, includes the keyword and a concrete business benefit),
   "tags": [2-4 Title Case tags]
 }}"""
     return system, user

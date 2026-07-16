@@ -13,10 +13,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# The 8 components registered in src/mdx-components.tsx (the only allowed tags).
+# The 11 components registered in src/mdx-components.tsx (the only allowed tags).
 ALLOWED_COMPONENTS = {
     "KeyTakeaways", "Callout", "FlowDiagram", "CompareDiagram",
     "BarChart", "Figure", "FAQ", "BlogCTA",
+    # New visual components (Phase 2)
+    "StatGrid", "Timeline", "DecisionTree",
 }
 # Internal route prefixes that actually exist on the site.
 VALID_ROUTE_PREFIXES = ("/services/", "/work/", "/blog/", "/about", "/contact", "/open-source", "/")
@@ -98,10 +100,13 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     elif len(h2s) > 6:
         r.warnings.append(f"{len(h2s)} H2 sections — consider tightening to 3-5")
 
-    # At least one illustration component (Flow/Compare/Bar/Figure).
-    illustration = any(c in text for c in ("<FlowDiagram", "<CompareDiagram", "<BarChart", "<Figure"))
+    # At least one illustration component (Flow/Compare/Bar/Figure/StatGrid/Timeline/DecisionTree).
+    illustration = any(c in text for c in (
+        "<FlowDiagram", "<CompareDiagram", "<BarChart", "<Figure",
+        "<StatGrid", "<Timeline", "<DecisionTree",
+    ))
     if not illustration:
-        r.errors.append("missing at least one illustration (FlowDiagram/CompareDiagram/BarChart/Figure)")
+        r.errors.append("missing at least one illustration (FlowDiagram/CompareDiagram/BarChart/Figure/StatGrid/Timeline/DecisionTree)")
 
     # ── Unknown components ──
     for tag in set(re.findall(r"<([A-Z]\w+)", text)):
