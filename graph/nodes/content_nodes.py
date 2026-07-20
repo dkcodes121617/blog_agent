@@ -75,30 +75,22 @@ class Nodes:
         archetype = data.get("archetype", "decision_framework").strip().lower()
 
         # Guard: reject developer-facing topics by scanning keyword + angle for
-        # implementation signals. Log and force a re-pick (counted as an attempt).
+        # implementation signals.
+        #
+        # This used to set `topic_similarity: 0.0` and claim in a comment that it was
+        # forcing a re-pick. It did nothing: pick_topic -> check_topic is an
+        # unconditional edge, check_topic overwrites topic_similarity with the real
+        # cosine, and BlogState is a plain TypedDict with no reducers, so last write
+        # wins. The rejected topic went straight on to outline and write while the log
+        # said "re-picking". It is now a real state flag the router reads.
+        #
+        # The intent_type condition has also been dropped: it only fired when the model
+        # happened to label the topic "informational", so any tutorial it labelled
+        # "commercial" bypassed the guard entirely.
         combined_lower = (keyword + " " + angle).lower()
-        is_dev_facing = intent_type == "informational" and any(
-            sig in combined_lower for sig in self._DEVELOPER_SIGNALS
-        )
-        if is_dev_facing:
-            log.info(
-                "  pick_topic: rejected developer-facing topic %r (intent=%s) — re-picking",
-                keyword, intent_type,
-            )
-            # Push the rejected keyword into recent so it won't be re-proposed.
-            return {
-                "primary_keyword": keyword,  # keep for recent-list carry-forward
-                "angle": angle,
-                "audience": data.get("audience", "").strip(),
-                "archetype": archetype,
-                "intent_type": intent_type,
-                "rationale": data.get("rationale", "").strip(),
-                "topic_attempts": attempts,
-                # Force topic similarity high so the uniqueness router re-picks.
-                "topic_similarity": 0.0,  # will be re-evaluated by check_topic
-            }
+        is_dev_facing = any(sig in combined_lower for sig in self._DEVELOPER_SIGNALS)
 
-        return {
+        result = {
             "primary_keyword": keyword,
             "angle": angle,
             "audience": data.get("audience", "").strip(),
@@ -106,7 +98,19 @@ class Nodes:
             "intent_type": intent_type,
             "rationale": data.get("rationale", "").strip(),
             "topic_attempts": attempts,
+            "topic_rejected": False,
         }
+
+        if is_dev_facing:
+            log.info(
+                "  pick_topic: rejected developer-facing topic %r (intent=%s) — re-picking",
+                keyword, intent_type,
+            )
+            # The keyword is still carried forward so it lands in the `recent` list on
+            # the next attempt and won't simply be re-proposed.
+            result["topic_rejected"] = True
+
+        return result
 
     def check_topic_uniqueness(self, state: BlogState) -> dict:
         probe = f"{state['primary_keyword']}. {state['angle']}"

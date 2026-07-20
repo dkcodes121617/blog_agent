@@ -23,7 +23,12 @@ log = logging.getLogger("agent.graph")
 
 # ── routers (conditional edges) ──
 def route_after_topic_uniqueness(state: BlogState) -> str:
-    if state["topic_similarity"] >= CONFIG.topic_sim_threshold:
+    # Two independent reasons to re-pick: the topic duplicates existing coverage, or
+    # pick_topic flagged it as developer-facing (see Nodes.pick_topic). Both share the
+    # same attempt budget.
+    too_similar = state["topic_similarity"] >= CONFIG.topic_sim_threshold
+    rejected = state.get("topic_rejected", False)
+    if too_similar or rejected:
         if state.get("topic_attempts", 0) >= MAX_TOPIC_ATTEMPTS:
             return "abort"
         return "retry_topic"
@@ -80,7 +85,9 @@ def build_graph(nodes: Nodes):
     g.add_node("registry", nodes.build_registry)
     g.add_node("final_uniqueness", nodes.final_uniqueness)
     g.add_node("finalize", nodes.finalize)
-    g.add_node("abort_topic", _abort("topic space exhausted — every angle too similar to existing posts"))
+    g.add_node("abort_topic", _abort(
+        "topic space exhausted — every angle was either too similar to an existing "
+        "post or developer-facing"))
     g.add_node("abort_validate", _abort("could not produce contract-valid MDX within revision budget"))
     g.add_node("abort_dup", _abort("finished draft too similar to an existing post"))
 

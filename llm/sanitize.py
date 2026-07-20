@@ -20,7 +20,6 @@ import unicodedata
 _REPLACEMENTS = {
     "‘": "'", "’": "'", "‚": "'", "‛": "'",
     "“": '"', "”": '"', "„": '"', "‟": '"',
-    "–": "-", "—": "-", "―": "-",
     "…": "...",
     " ": " ",   # non-breaking space
     " ": " ", " ": " ", " ": " ",
@@ -31,6 +30,20 @@ _REPLACEMENTS = {
 
 _REPLACE_RE = re.compile("|".join(re.escape(k) for k in _REPLACEMENTS))
 
+# ── Dashes ──
+# Em/en dashes need their own pass: a one-to-one map to "-" destroys the spacing.
+# The model writes them unspaced in the normal typographic way ("makes sense—and
+# when it doesn't"), so replacing the character alone produced "makes sense-and when
+# it doesn't", which reads as a broken hyphenated word. That shipped into a
+# published post's section heading.
+#
+# Numeric ranges are handled first: an en dash between digits really is a hyphen
+# ("2024–2026" -> "2024-2026") and must NOT gain spaces.
+_NUM_RANGE_RE = re.compile(r"(\d)\s*[–—―]\s*(\d)")
+# Every other dash is parenthetical and becomes a spaced hyphen, absorbing any
+# whitespace already around it so we never emit a double space.
+_DASH_RE = re.compile(r"[ 	]*[–—―][ 	]*")
+
 
 def clean_text(text: str) -> str:
     """Fix encoding + smart punctuation. Safe to run on any model output."""
@@ -39,6 +52,9 @@ def clean_text(text: str) -> str:
     # Normalise unicode forms first (composes stray combining marks).
     text = unicodedata.normalize("NFKC", text)
     text = _REPLACE_RE.sub(lambda m: _REPLACEMENTS[m.group(0)], text)
+    # Ranges before parentheticals — order matters (see the regexes above).
+    text = _NUM_RANGE_RE.sub(r"\1-\2", text)
+    text = _DASH_RE.sub(" - ", text)
     return text
 
 

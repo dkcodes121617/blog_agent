@@ -137,7 +137,17 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
             r.errors.append(f"invalid service link {l} (valid: /services/web|mobile|ai)")
         bm = re.match(r"^/blog/([a-z0-9-]+)$", l)
         if bm and known_slugs and bm.group(1) not in known_slugs:
-            r.warnings.append(f"blog link {l} points to a slug not in the registry")
+            # ERROR, not a warning. A /blog/ link to a slug that isn't in the registry
+            # is a guaranteed 404 the moment the post goes live, and warnings don't
+            # loop back to the writer — so this used to ship silently. Verified safe
+            # to tighten: all 16 currently published posts pass this check.
+            #
+            # The `known_slugs` guard matters: it is empty on code paths that don't
+            # load the KB, and without it every link would be flagged.
+            r.errors.append(
+                f"blog link {l} points to a slug not in the registry — link an existing "
+                f"post or drop the link"
+            )
 
     # ── Lead paragraph (first non-empty block is prose, not a component/heading) ──
     first_block = text.split("\n\n", 1)[0].strip()

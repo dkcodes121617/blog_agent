@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from config import CONFIG
@@ -51,6 +52,18 @@ class FactsSnapshot:
     def to_prompt_block(self, max_playbook_chars: int = 6000) -> str:
         """A compact, human-readable block to inject as grounding facts."""
         lines: list[str] = []
+        # The model has no reliable sense of "now" and will otherwise default to its
+        # training-era year — which is exactly how two published posts ended up titled
+        # "...in 2025" while being published in July 2026. State the date explicitly and
+        # tell the writer which year any year-reference must use.
+        today = date.today()
+        lines.append(f"TODAY'S DATE: {today.isoformat()}")
+        lines.append(
+            f"CURRENT YEAR: {today.year}. Any year mentioned in a title, heading, slug, "
+            f"or statement about current prices/trends must be {today.year}. Never write "
+            f"{today.year - 1} as though it were the current year."
+        )
+        lines.append("")
         lines.append(f"BRAND: {self.brand_name} — {self.tagline}")
         lines.append(f"SITE: {self.url}")
         lines.append("")
