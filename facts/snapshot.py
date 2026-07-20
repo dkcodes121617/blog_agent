@@ -49,7 +49,7 @@ class FactsSnapshot:
     playbook_excerpt: str = ""
 
     # ── prompt-ready rendering ──
-    def to_prompt_block(self, max_playbook_chars: int = 6000) -> str:
+    def to_prompt_block(self, max_playbook_chars: int = 12000) -> str:
         """A compact, human-readable block to inject as grounding facts."""
         lines: list[str] = []
         # The model has no reliable sense of "now" and will otherwise default to its
@@ -87,14 +87,75 @@ class FactsSnapshot:
                 dl = f" — {o['downloads']} downloads" if o.get("downloads") else ""
                 lines.append(f"  - {o['name']}{dl}: {o.get('description','')}")
             lines.append("")
+        # Conversion + reference pages the writer can link to. Without this the model
+        # only knows about /services, /work and /blog, so posts never link to the pages
+        # that actually convert.
+        lines.append("OTHER PAGES YOU MAY LINK TO (these exist; do not invent others):")
+        lines.append("  - /get-started: the free-prototype offer + request form (best CTA target)")
+        lines.append("  - /pricing: how fixed-scope pricing works vs hourly/retainer/freelancer")
+        lines.append("  - /faq: NDAs, ownership, invoicing currency, support after handover")
+        lines.append("  - /testimonials: all real client messages")
+        lines.append("  - /contact, /about, /work, /blog, /open-source")
+        lines.append("")
         lines.append("EXISTING BLOG POSTS (do NOT duplicate these topics or slugs):")
         for post in self.existing_posts:
             lines.append(f"  - /blog/{post['slug']}: {post['title']}")
         if self.playbook_excerpt:
             lines.append("")
             lines.append("BRAND/SEO PLAYBOOK (voice, USPs, guardrails — obey these):")
-            lines.append(self.playbook_excerpt[:max_playbook_chars].strip())
+            lines.append(_playbook_sections(self.playbook_excerpt, max_playbook_chars))
         return "\n".join(lines)
+
+
+# ── playbook extraction ──
+# details.md is ~57k chars of full project reference. Naively truncating it to the
+# first N characters delivered tone-of-voice and the USPs but cut off everything from
+# roughly section 6 onward — including the integrity rules and the per-project
+# confidentiality boundaries, which sit near char 47,000. The writer was therefore
+# never shown the rules it most needs to obey.
+#
+# So pull the sections a writer actually needs, by heading, in priority order, and
+# spend the character budget on those instead of on whatever happens to come first.
+#
+# Order is priority order, NOT document order: the budget is spent top-down and the
+# rules that must never be broken (confidentiality, integrity, naming conventions)
+# come first. Voice and positioning matter, but a post in slightly-off tone is a
+# quality problem, whereas a post that leaks a client's internals is a trust problem.
+_PLAYBOOK_SECTIONS = [
+    "### 20.1 Work / portfolio (`src/data/projects.ts`)",   # integrity + confidentiality
+    "## 21. Conventions & guardrails",
+    "### 2.4 Tone of voice",
+    "### 2.3 Brand positioning",
+    "### 2.2 Vision, mission, values",
+    "## 3. Unique Selling Propositions (USPs)",
+    "### 2.6 What differentiates WizCodes from traditional software companies",
+    "## 4. The Free Prototype offering",
+    "### 2.5 Target audience",
+]
+
+
+def _playbook_sections(playbook: str, budget: int) -> str:
+    """Return the writer-relevant sections of details.md, within `budget` chars.
+
+    Falls back to plain truncation if the headings can't be found, so a reformatted
+    details.md degrades rather than silently emitting nothing.
+    """
+    out: list[str] = []
+    used = 0
+    for heading in _PLAYBOOK_SECTIONS:
+        start = playbook.find(heading)
+        if start == -1:
+            continue
+        # Run to the next heading of the same or higher level.
+        after = playbook[start + len(heading):]
+        ends = [after.find(m) for m in ("\n## ", "\n### ") if after.find(m) != -1]
+        end = min(ends) if ends else len(after)
+        block = (heading + after[:end]).strip()
+        if used + len(block) > budget:
+            break
+        out.append(block)
+        used += len(block)
+    return "\n\n".join(out) if out else playbook[:budget].strip()
 
 
 # ── extraction helpers ──
@@ -132,7 +193,11 @@ def _extract_projects(projects_ts: str) -> list[ProjectFact]:
         pf.client = _f(text, "client")
         pf.client_country = _f(text, "clientCountry")
         pf.description = _f(text, "description")
-        pf.slug = _f(text, "slug")
+        # The site derives `slug: p.slug ?? p.id` at runtime, so most entries carry no
+        # literal slug in the source text. Mirror that fallback here — otherwise this
+        # regex only finds the six hardcoded slugs and the writer believes the other
+        # twenty project pages do not exist, so it can never link to them.
+        pf.slug = _f(text, "slug") or pf.id
         pf.hide_status = "hideStatus: true" in text
         tech_m = re.search(r"tech:\s*\[([^\]]*)\]", text)
         if tech_m:
