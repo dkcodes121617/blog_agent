@@ -131,5 +131,12 @@ def make_pipeline(kb: KnowledgeBase | None = None, llm: LLMClient | None = None)
     """Factory: build facts snapshot + KB + graph, ready to invoke."""
     snap = build_snapshot()
     kb = kb or KnowledgeBase()
-    nodes = Nodes(facts_block=snap.to_prompt_block(), kb=kb, llm=llm)
+    # existing_posts comes straight from posts.ts in registry order (newest first),
+    # which is what the archetype-rotation check needs.
+    nodes = Nodes(
+        facts_block=snap.to_prompt_block(),
+        kb=kb,
+        llm=llm,
+        recent_posts=snap.existing_posts,
+    )
     return build_graph(nodes), nodes, kb

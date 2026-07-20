@@ -36,10 +36,19 @@ HUMANIZE_MIN_SCORE = 70
 class Nodes:
     """Bundles the shared clients so nodes can be plain methods."""
 
-    def __init__(self, facts_block: str, kb: KnowledgeBase, llm: LLMClient | None = None):
+    def __init__(
+        self,
+        facts_block: str,
+        kb: KnowledgeBase,
+        llm: LLMClient | None = None,
+        recent_posts: list[dict] | None = None,
+    ):
         self.facts_block = facts_block
         self.kb = kb
         self.llm = llm or LLMClient()
+        # Registry entries, newest first — used to work out which archetypes are
+        # over-represented so the next post is a different shape (see P.blocked_archetypes).
+        self.recent_posts = recent_posts or []
 
     # ── load ──
     def load_context(self, state: BlogState) -> dict:
@@ -66,7 +75,10 @@ class Nodes:
         # Include the just-rejected topic so the model doesn't re-propose it.
         if state.get("primary_keyword"):
             recent = recent + [state["primary_keyword"]]
-        system, user = P.topic_prompt(self.facts_block, recent)
+        blocked = P.blocked_archetypes(self.recent_posts)
+        if blocked:
+            log.info("  pick_topic: archetypes blocked this run: %s", ", ".join(blocked))
+        system, user = P.topic_prompt(self.facts_block, recent, blocked)
         data = self.llm.complete_json(system=system, user=user, max_tokens=1000)
 
         keyword = data.get("primary_keyword", "").strip()
@@ -89,6 +101,10 @@ class Nodes:
         # "commercial" bypassed the guard entirely.
         combined_lower = (keyword + " " + angle).lower()
         is_dev_facing = any(sig in combined_lower for sig in self._DEVELOPER_SIGNALS)
+        # Belt and braces: the blocked archetypes are already absent from the menu, but
+        # the model can still name one. Treat that as a rejection rather than letting a
+        # fifth cost breakdown through on a technicality.
+        uses_blocked = archetype in blocked
 
         result = {
             "primary_keyword": keyword,
@@ -101,10 +117,10 @@ class Nodes:
             "topic_rejected": False,
         }
 
-        if is_dev_facing:
+        if is_dev_facing or uses_blocked:
+            reason = "developer-facing" if is_dev_facing else f"blocked archetype '{archetype}'"
             log.info(
-                "  pick_topic: rejected developer-facing topic %r (intent=%s) — re-picking",
-                keyword, intent_type,
+                "  pick_topic: rejected topic %r (%s) — re-picking", keyword, reason,
             )
             # The keyword is still carried forward so it lands in the `recent` list on
             # the next attempt and won't simply be re-proposed.

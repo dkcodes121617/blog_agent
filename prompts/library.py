@@ -19,6 +19,89 @@ from __future__ import annotations
 
 ARCHETYPES = ("cost_breakdown", "vs_comparison", "decision_framework", "mistake_guide")
 
+# ── Archetype rotation ──────────────────────────────────────────────────────
+# The archetype is chosen at generation time but is NOT stored in the site's posts.ts
+# registry (its schema is slug/title/description/date/tags/readingMinutes). On a
+# stateless runner there is therefore no record of what shape recent posts took —
+# which is how four consecutive `cost_breakdown` posts shipped, each following the
+# same five-heading scaffold below.
+#
+# Rather than change the site's registry schema, the archetype is inferred back out
+# of the title. Titles are written to fit the archetype, so the signal is strong.
+# The result is used to remove over-used archetypes from the menu offered to the
+# topic strategist, so the blog cannot drift into being all one shape.
+
+# Ordered most- to least-specific: first match wins, so "Should I build X or Y?"
+# classifies as a decision framework rather than a comparison.
+_ARCHETYPE_SIGNATURES: list[tuple[str, "re.Pattern[str]"]] = []
+
+
+def _build_signatures():
+    import re
+    return [
+        ("mistake_guide", re.compile(
+            r"\bmistakes?\b|\bpitfalls?\b|\bavoid\b|\bwrong\b|\bdon'?t\b|\bstop\b", re.I)),
+        ("decision_framework", re.compile(
+            r"\bshould (i|you|we)\b|\bhow to (choose|decide|pick)\b|\bwhich\b"
+            r"|\bwhen to\b|\bframework\b|\bchecklist\b|\bdecisions?\b|\bcriteria\b", re.I)),
+        ("vs_comparison", re.compile(
+            r"\bvs\.?\b|\bversus\b|\bcompared? (to|with)\b|\balternatives?\b"
+            r"|\btrade-?offs?\b", re.I)),
+        ("cost_breakdown", re.compile(
+            r"\bcosts?\b|\bpric(e|es|ing)\b|\bbudget\b|\bhow much\b|\broi\b"
+            r"|\bfees?\b|\$\d", re.I)),
+    ]
+
+
+def infer_archetype(title: str, description: str = "") -> str:
+    """Best-effort archetype for an already-published post, from its title.
+
+    The title is checked first because it is the most deliberate signal; the
+    description is only a fallback. Defaults to decision_framework, the most common
+    shape for a buyer-facing blog, when nothing matches.
+    """
+    global _ARCHETYPE_SIGNATURES
+    if not _ARCHETYPE_SIGNATURES:
+        _ARCHETYPE_SIGNATURES = _build_signatures()
+    for text in (title or "", description or ""):
+        for name, pattern in _ARCHETYPE_SIGNATURES:
+            if pattern.search(text):
+                return name
+    return "decision_framework"
+
+
+def blocked_archetypes(recent_posts: list[dict], *, lookback: int = 4) -> list[str]:
+    """Archetypes the next post may NOT use.
+
+    `recent_posts` is the registry list, newest first — the publisher inserts at the
+    head of the array, so registry order is publication order.
+
+    Two rules, both needed:
+      - never repeat the immediately previous post's archetype (no back-to-back);
+      - never use an archetype already accounting for 2+ of the last `lookback` posts
+        (stops a 3-in-4 run even when it alternates).
+
+    Guard: never block everything. If the rules would leave no valid choice, only the
+    back-to-back rule is kept, so at least three options always remain.
+    """
+    if not recent_posts:
+        return []
+
+    window = recent_posts[:lookback]
+    inferred = [
+        infer_archetype(p.get("title", ""), p.get("description", "")) for p in window
+    ]
+
+    blocked = {inferred[0]}
+    for name in ARCHETYPES:
+        if inferred.count(name) >= 2:
+            blocked.add(name)
+
+    if len(blocked) >= len(ARCHETYPES):
+        blocked = {inferred[0]}
+
+    return sorted(blocked)
+
 # Archetype → natural H2 scaffold (template strings, not final titles).
 _H2_PATTERNS: dict[str, list[str]] = {
     "cost_breakdown": [
@@ -101,7 +184,11 @@ STUDIO_PERSONA = (
 
 
 # ── Node: topic strategist ──────────────────────────────────────────────────
-def topic_prompt(facts_block: str, avoid_recent: list[str]) -> tuple[str, str]:
+def topic_prompt(
+    facts_block: str,
+    avoid_recent: list[str],
+    blocked: list[str] | None = None,
+) -> tuple[str, str]:
     system = (
         "You are a lead generation strategist for a B2B software studio. Your job "
         "is to pick blog topics that attract business owners, startup founders, and "
@@ -109,7 +196,19 @@ def topic_prompt(facts_block: str, avoid_recent: list[str]) -> tuple[str, str]:
         "You write for buyers, not builders."
     )
     avoid = "\n".join(f"  - {s}" for s in avoid_recent) or "  (none yet)"
-    archetype_list = "\n".join(f"  - {a}" for a in ARCHETYPES)
+
+    # Over-used archetypes are removed from the menu entirely rather than merely
+    # discouraged — the model reliably picks whatever is listed, and a "please vary"
+    # instruction did not stop four cost breakdowns in a row.
+    blocked = blocked or []
+    available = [a for a in ARCHETYPES if a not in blocked] or list(ARCHETYPES)
+    archetype_list = "\n".join(f"  - {a}" for a in available)
+    if blocked:
+        archetype_list += (
+            "\n\nRecent posts have already used "
+            + ", ".join(blocked)
+            + ", so those are not available this time. Pick from the list above."
+        )
     user = f"""Here are the studio's real facts and its existing blog coverage:
 
 {facts_block}
