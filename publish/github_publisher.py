@@ -152,5 +152,40 @@ def publish_post(state: dict, kb: KnowledgeBase | None = None) -> str:
             tags=state["tags"], body_text=state["body_mdx"],
         )
 
+    _ping_indexnow(slug)
+
     log.info("published %s", mdx_rel)
     return mdx_rel
+
+
+def _ping_indexnow(slug: str) -> None:
+    """Tell Bing/IndexNow the new URL exists.
+
+    Bing visibility is a documented input to AI answer engines (ChatGPT's retrieval
+    leans on it), and IndexNow is the only push-notification channel available — there
+    is no Google equivalent since the ping endpoints were retired. Google discovers the
+    post through the sitemap on the next crawl.
+
+    Best-effort by design: a failed ping must never fail a publish that already
+    succeeded, so every error is swallowed with a warning.
+    """
+    key = CONFIG.indexnow_key
+    if not key:
+        log.info("indexnow: no INDEXNOW_KEY set — skipping ping")
+        return
+    try:
+        import requests
+
+        resp = requests.post(
+            "https://api.indexnow.org/IndexNow",
+            json={
+                "host": "wizcodes.site",
+                "key": key,
+                "keyLocation": f"https://wizcodes.site/{key}.txt",
+                "urlList": [f"https://wizcodes.site/blog/{slug}"],
+            },
+            timeout=15,
+        )
+        log.info("indexnow: HTTP %s for /blog/%s", resp.status_code, slug)
+    except Exception as e:  # noqa: BLE001
+        log.warning("indexnow ping failed (ignored): %s", e)

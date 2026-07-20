@@ -49,11 +49,18 @@ class Config:
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4.6")
     small_model: str = os.getenv("ANTHROPIC_SMALL_FAST_MODEL", "claude-haiku-4.5")
+    # Topic choice and outline set the shape of the whole post, so they get the
+    # strongest model; the per-section writing stays on the default. Probed and
+    # confirmed available on this proxy.
+    strategy_model: str = os.getenv("ANTHROPIC_STRATEGY_MODEL", "claude-opus-4-8")
 
     # ── GitHub publishing ──
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     github_repo: str = os.getenv("GITHUB_REPO", "dkcodes121617/wizcodes_main_website")
     github_branch: str = os.getenv("GITHUB_BRANCH", "main")
+    # IndexNow key for pinging Bing on publish. The matching <key>.txt must be served
+    # from the site root (public/) or the ping is rejected. Optional: unset = no ping.
+    indexnow_key: str = os.getenv("INDEXNOW_KEY", "2df4018dbb1444e6bc48faf84fc0ff39")
     git_author_name: str = os.getenv("GIT_AUTHOR_NAME", "WizCodes Blog Bot")
     git_author_email: str = os.getenv("GIT_AUTHOR_EMAIL", "business@wizcodes.site")
 

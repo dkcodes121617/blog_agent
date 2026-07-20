@@ -36,6 +36,9 @@ log = logging.getLogger("agent.llm")
 # The single most important header. Do not remove — the proxy's WAF blocks
 # anything that doesn't look like the official CLI/SDK.
 _USER_AGENT = "claude-cli/1.0.0 (external, cli)"
+
+# Below this, a cache entry costs more than it saves.
+_CACHE_MIN_CHARS = 2000
 _ANTHROPIC_VERSION = "2023-06-01"
 
 
@@ -59,6 +62,7 @@ class LLMClient:
                 "x-api-key": self.api_key,
                 "anthropic-version": _ANTHROPIC_VERSION,
                 "user-agent": _USER_AGENT,
+                "anthropic-beta": "prompt-caching-2024-07-31",
             }
         )
 
@@ -104,10 +108,23 @@ class LLMClient:
         model: str | None = None,
     ) -> str:
         """Return the assistant's text for a single-turn system+user prompt."""
+        # The facts block is ~17k chars and is resent on every call in a run (intro +
+        # one per H2 + closing + factcheck + humanize = 9+ calls). Prompt caching is
+        # supported by this proxy (probed: cache_read confirmed), so the system prompt
+        # is marked cacheable whenever it is long enough to be worth a cache entry.
+        # Short system prompts are sent as a plain string to avoid pointless overhead.
+        system_field: object = system
+        if len(system) > _CACHE_MIN_CHARS:
+            system_field = [{
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }]
+
         payload: dict = {
             "model": model or self.model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": system_field,
             "messages": [{"role": "user", "content": user}],
         }
         if temperature is not None:
@@ -124,9 +141,10 @@ class LLMClient:
         )
         usage = data.get("usage", {})
         log.info(
-            "llm.complete %.1fs model=%s in=%s out=%s stop=%s",
+            "llm.complete %.1fs model=%s in=%s out=%s cache_r=%s stop=%s",
             dt, data.get("model"), usage.get("input_tokens"),
-            usage.get("output_tokens"), data.get("stop_reason"),
+            usage.get("output_tokens"), usage.get("cache_read_input_tokens"),
+            data.get("stop_reason"),
         )
         if not text.strip():
             raise LLMTransient("empty completion")

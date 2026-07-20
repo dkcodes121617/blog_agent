@@ -29,6 +29,7 @@ class ProjectFact:
     id: str = ""
     name: str = ""
     category: str = ""
+    industry: str = ""
     client: str = ""
     client_country: str = ""
     description: str = ""
@@ -46,6 +47,9 @@ class FactsSnapshot:
     projects: list[ProjectFact] = field(default_factory=list)
     open_source: list[dict] = field(default_factory=list)   # {name, description, downloads}
     existing_posts: list[dict] = field(default_factory=list)  # {slug, title, description, tags}
+    # Visual component types used by the most recent posts, so the writer can rotate
+    # away from them. Not stored in the registry, so it is read back out of the MDX.
+    recent_visuals: list[str] = field(default_factory=list)
     playbook_excerpt: str = ""
 
     # ── prompt-ready rendering ──
@@ -77,7 +81,8 @@ class FactsSnapshot:
             tag = " [no-status]" if p.hide_status else ""
             loc = f" — {p.client}, {p.client_country}" if p.client else ""
             path = f" (/work/{p.slug})" if p.slug else ""
-            lines.append(f"  - {p.name} [{p.category}]{loc}{path}{tag}: {p.description}")
+            ind = f" · {p.industry}" if p.industry else ""
+            lines.append(f"  - {p.name} [{p.category}{ind}]{loc}{path}{tag}: {p.description}")
             if p.tech:
                 lines.append(f"      tech: {', '.join(p.tech)}")
         lines.append("")
@@ -190,6 +195,7 @@ def _extract_projects(projects_ts: str) -> list[ProjectFact]:
         pf.id = _f(text, "id")
         pf.name = _f(text, "name")
         pf.category = _f(text, "category")
+        pf.industry = _f(text, "industry")
         pf.client = _f(text, "client")
         pf.client_country = _f(text, "clientCountry")
         pf.description = _f(text, "description")
@@ -255,6 +261,30 @@ def _multiline_field(text: str, key: str) -> str:
     return m.group(1) if m else _f(text, key)
 
 
+_VISUAL_COMPONENTS = (
+    "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
+    "StatGrid", "Timeline", "DecisionTree",
+)
+
+
+def _recent_visuals(site_dir: Path, posts: list[dict], lookback: int = 4) -> list[str]:
+    """Visual component types used by the newest `lookback` posts.
+
+    The archetype map alone put a BarChart in 4 of 5 published posts and never once
+    used FlowDiagram or Figure. Feeding recent usage back lets the writer rotate.
+    """
+    used: list[str] = []
+    for post in posts[:lookback]:
+        path = site_dir / CONFIG.blog_content_rel / f"{post['slug']}.mdx"
+        if not path.exists():
+            continue
+        body = path.read_text(encoding="utf-8", errors="replace")
+        for comp in _VISUAL_COMPONENTS:
+            if f"<{comp}" in body and comp not in used:
+                used.append(comp)
+    return used
+
+
 def build_snapshot(site_dir: Path | str | None = None) -> FactsSnapshot:
     # Coerce to Path — callers may pass a str (e.g. GitPython's working_tree_dir).
     site_dir = Path(site_dir) if site_dir else _resolve_site_dir()
@@ -272,6 +302,7 @@ def build_snapshot(site_dir: Path | str | None = None) -> FactsSnapshot:
         projects=_extract_projects(projects_ts),
         open_source=_extract_open_source(oss_ts),
         existing_posts=_extract_posts(posts_ts),
+        recent_visuals=_recent_visuals(site_dir, _extract_posts(posts_ts)),
         playbook_excerpt=playbook,
     )
     return snap

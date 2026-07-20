@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 
 from config import CONFIG
 from graph.state import BlogState
@@ -42,10 +43,16 @@ class Nodes:
         kb: KnowledgeBase,
         llm: LLMClient | None = None,
         recent_posts: list[dict] | None = None,
+        projects: list | None = None,
+        recent_visuals: list[str] | None = None,
     ):
         self.facts_block = facts_block
         self.kb = kb
         self.llm = llm or LLMClient()
+        # Real project corpus — the topic universe the focus picker draws from.
+        self.projects = projects or []
+        # Visual component types recent posts leaned on — rotated away from.
+        self.recent_visuals = recent_visuals or []
         # Registry entries, newest first — used to work out which archetypes are
         # over-represented so the next post is a different shape (see P.blocked_archetypes).
         self.recent_posts = recent_posts or []
@@ -78,8 +85,20 @@ class Nodes:
         blocked = P.blocked_archetypes(self.recent_posts)
         if blocked:
             log.info("  pick_topic: archetypes blocked this run: %s", ", ".join(blocked))
-        system, user = P.topic_prompt(self.facts_block, recent, blocked)
-        data = self.llm.complete_json(system=system, user=user, max_tokens=1000)
+
+        # Assign this run a focus drawn from the least-covered part of the real project
+        # corpus, so the strategist chooses WITHIN a subject rather than re-deriving the
+        # same highest-probability one ("how much does X cost") from an open prompt.
+        # Seeded by date so a stateless runner is deterministic within a day but rotates
+        # across days.
+        focus = P.pick_focus(self.projects, self.recent_posts,
+                             rotation_seed=date.today().toordinal())
+        if focus:
+            log.info("  pick_topic: focus = %s (%d anchor project(s), coverage=%d)",
+                     focus["brief"], focus["anchor_count"], focus["coverage"])
+        system, user = P.topic_prompt(self.facts_block, recent, blocked, focus)
+        data = self.llm.complete_json(system=system, user=user, max_tokens=1000,
+                                     model=CONFIG.strategy_model)
 
         keyword = data.get("primary_keyword", "").strip()
         angle = data.get("angle", "").strip()
@@ -115,6 +134,7 @@ class Nodes:
             "rationale": data.get("rationale", "").strip(),
             "topic_attempts": attempts,
             "topic_rejected": False,
+            "focus_brief": focus["brief"] if focus else "",
         }
 
         if is_dev_facing or uses_blocked:
@@ -143,7 +163,8 @@ class Nodes:
             state.get("audience", ""), state.get("archetype", "decision_framework"),
             state.get("related_slugs", []),
         )
-        data = self.llm.complete_json(system=system, user=user, max_tokens=1100)
+        data = self.llm.complete_json(system=system, user=user, max_tokens=1100,
+                                     model=CONFIG.strategy_model)
         return {"outline": data}
 
     # ── write (SECTIONED — many short calls instead of one long one) ──
@@ -162,7 +183,7 @@ class Nodes:
         if state.get("factcheck_issues"):
             feedback += "\n\nDo NOT make these unsupported claims:\n" + "\n".join(state["factcheck_issues"])
 
-        assignments = self._assign_sections(outline, h2s)
+        assignments = self._assign_sections(outline, h2s, self.recent_visuals)
         parts: list[str] = []
 
         # 1) intro (lead + KeyTakeaways)
@@ -190,34 +211,50 @@ class Nodes:
         return sanitize_prose(raw)
 
     @staticmethod
-    def _assign_sections(outline: dict, h2s: list[str]) -> list[dict]:
-        """Distribute up to 2 illustrations + internal links across H2 sections.
+    def _assign_sections(outline: dict, h2s: list[str], used_visuals: list[str] | None = None) -> list[dict]:
+        """Distribute illustrations + internal links across the H2 sections.
 
-        primary_illustration → placed in section index 1 (second section, or first
-          if only one section exists) to give the post an early visual anchor.
-        secondary_illustration → placed in the last section as a closing visual.
-        If primary == secondary index (1-section post), only primary is emitted.
-        Internal links are spread one-per-section in order.
+        Previously hardcoded to exactly TWO illustrations (primary in section 1,
+        secondary in the last), which is why every published post has exactly two
+        visuals regardless of length — a code ceiling, not a model choice. Now up to
+        four are spread across the body, and the types rotate: the archetype map alone
+        put a BarChart in 4 of 5 posts and never once used FlowDiagram or Figure.
         """
         n = len(h2s)
         assignments: list[dict] = [dict() for _ in range(n)]
 
-        primary_idx = min(1, n - 1)
-        secondary_idx = n - 1  # last section
+        # Collect whatever the outline proposed, in preference order.
+        proposed: list[dict] = []
+        for key in ("primary_illustration", "secondary_illustration", "illustration"):
+            val = outline.get(key)
+            if isinstance(val, dict) and val.get("type"):
+                proposed.append(val)
+        for val in outline.get("extra_illustrations") or []:
+            if isinstance(val, dict) and val.get("type"):
+                proposed.append(val)
 
-        primary_ill = outline.get("primary_illustration")
-        secondary_ill = outline.get("secondary_illustration")
+        # Drop types already leaned on by recent posts, so long as something remains.
+        blocked = set(used_visuals or [])
+        fresh = [v for v in proposed if v.get("type") not in blocked]
+        ordered = fresh + [v for v in proposed if v not in fresh]
 
-        # Fallback: legacy single-illustration field (backwards compat with older outlines)
-        if not primary_ill and outline.get("illustration"):
-            primary_ill = outline["illustration"]
+        # De-duplicate types within this post, then spread across the body: never two
+        # visuals adjacent, never one in the opening section.
+        seen: set[str] = set()
+        picked: list[dict] = []
+        for v in ordered:
+            if v["type"] in seen:
+                continue
+            seen.add(v["type"])
+            picked.append(v)
+            if len(picked) >= min(4, max(2, n - 1)):
+                break
 
-        if primary_ill and isinstance(primary_ill, dict):
-            assignments[primary_idx]["illustration"] = primary_ill
-
-        if secondary_ill and isinstance(secondary_ill, dict) and secondary_idx != primary_idx:
-            # Only assign the secondary if it's in a different section than the primary.
-            assignments[secondary_idx]["illustration"] = secondary_ill
+        if picked:
+            slots = [i for i in range(n) if i != 0] or [0]
+            step = max(1, len(slots) // len(picked))
+            for i, v in enumerate(picked):
+                assignments[slots[min(i * step, len(slots) - 1)]]["illustration"] = v
 
         # Internal links → one per section, in order.
         links = [
@@ -227,9 +264,11 @@ class Nodes:
         for i, link in enumerate(links):
             assignments[i % n].setdefault("link", link)
 
-        # A single tip callout on the middle section for texture.
-        if n >= 2:
-            assignments[n // 2]["callout"] = True
+        # A single tip callout for texture, kept off a section that already has a visual.
+        for i in range(n // 2, n):
+            if "illustration" not in assignments[i]:
+                assignments[i]["callout"] = True
+                break
 
         return assignments
 

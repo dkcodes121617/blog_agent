@@ -152,23 +152,28 @@ _SECONDARY_ILLUSTRATION: dict[str, str] = {
 
 # Archetype → intro hook guidance (how the lead paragraph should open).
 _INTRO_HOOK: dict[str, str] = {
+    # AEO: retrieval weights the opening heavily and wants the ANSWER there, not a
+    # story. Each hook is capped at one sentence, followed immediately by a direct
+    # answer. The narrative still happens, further down, where it costs nothing.
+    # These previously all asked for a scene-setting anecdote, which spent the whole
+    # extractable window on throat-clearing.
     "cost_breakdown": (
-        "Open with the moment a founder or business owner got a surprise bill or a "
-        "wildly varying quote. Name the real cost range, then promise to explain what "
-        "actually drives it."
+        "ONE short sentence naming the situation (a surprise bill, a wildly varying "
+        "quote). Then immediately answer the question the title asks, in plain terms, "
+        "with the real range or the real determining factor."
     ),
     "vs_comparison": (
-        "Open with the painful situation of having to choose between two options with "
-        "conflicting advice online. Acknowledge the tension, then promise a clear, "
-        "opinionated framework."
+        "ONE short sentence acknowledging the choice. Then immediately state which "
+        "option suits which situation - the actual answer - before any elaboration."
     ),
     "decision_framework": (
-        "Open with a costly mistake that happens when people skip this decision or rush "
-        "it. Set up why a clear framework matters more than gut feeling here."
+        "ONE short sentence on what goes wrong when this decision is rushed. Then "
+        "immediately give the short version of the framework: the one or two "
+        "variables that actually decide it."
     ),
     "mistake_guide": (
-        "Open by naming the mistake bluntly — the one most founders make at exactly this "
-        "stage. Make it feel recognisable, not preachy. Then promise the fix."
+        "ONE short sentence naming the mistake plainly. Then immediately say what to "
+        "do instead, before explaining why."
     ),
 }
 
@@ -183,11 +188,164 @@ STUDIO_PERSONA = (
 )
 
 
+# ── Topic focus ─────────────────────────────────────────────────────────────
+# The convergence problem was never the uniqueness gate: four "cost of X" posts
+# scored at most 0.693 pairwise against an 0.82 threshold, so they passed easily.
+# Cosine similarity finds near-duplicates, not thematic sameness.
+#
+# The actual cause is that the strategist was asked to "propose ONE topic" from a
+# fixed prior (a software studio's services), so it re-derived the same highest-
+# probability answer every run: how much does X cost.
+#
+# The fix is to stop asking an open question. Each run is assigned a FOCUS drawn
+# from the real project corpus — an industry, a delivery category, or a technology —
+# picked as whichever axis the blog has covered least. The model then chooses a topic
+# *within* that focus. Convergence becomes structurally impossible rather than
+# discouraged, and every topic stays anchored to work actually delivered.
+
+# Axis values worth writing about. Countries are deliberately excluded: they are
+# evidence, not subject matter.
+_FOCUS_AXES = ("industry", "category", "tech")
+
+_CATEGORY_LABEL = {
+    "mobile": "mobile app development",
+    "web": "web and SaaS development",
+    "ai": "AI automation and agents",
+    "game": "game development",
+}
+
+# Technology is only a valid focus when a BUYER would actually weigh it up. A founder
+# choosing between Flutter and React Native is a real commercial decision; "building
+# with Dart" or "Flame Engine" is an implementation detail and would produce exactly
+# the developer tutorial the strategist is told not to write. So the tech axis runs
+# off an allowlist rather than off whatever appears in the tech arrays.
+_BUYER_FACING_TECH = {
+    "Flutter": "choosing Flutter for a cross-platform app",
+    "React Native": "choosing React Native for a cross-platform app",
+    "Expo": "shipping and updating apps with Expo",
+    "Next.js": "choosing Next.js for a web product",
+    "React": "choosing React for a web product",
+    "FastAPI": "choosing a Python backend for a product",
+    "Firebase": "using Firebase as a product backend",
+    "Supabase": "using Supabase as a product backend",
+    "PostgreSQL": "choosing a database for a growing product",
+    "LangGraph": "orchestrating multi-step AI agents",
+    "LLM": "putting an LLM into a production product",
+    "OpenAI": "choosing between LLM providers for a product",
+    "RevenueCat": "handling subscriptions and in-app purchases",
+    "Stripe": "taking payments in a product",
+    "WhatsApp Business API": "automating customer conversations on WhatsApp",
+}
+
+# Anything appearing on only one project is too thin to anchor an article.
+_MIN_TECH_PROJECTS = 2
+
+# How many of the least-covered options to rotate between. Small enough that the
+# strongest opportunities keep coming up, large enough that consecutive runs differ.
+_ROTATION_POOL = 8
+
+
+def _coverage(value: str, posts: list[dict]) -> int:
+    """How many existing posts already touch this axis value."""
+    needle = value.lower()
+    n = 0
+    for p in posts:
+        hay = f"{p.get('title','')} {p.get('description','')} {' '.join(p.get('tags',[]))}".lower()
+        if needle in hay:
+            n += 1
+    return n
+
+
+def build_focus_options(projects: list, posts: list[dict]) -> list[dict]:
+    """Every candidate focus, with its anchor projects and current coverage.
+
+    `projects` are ProjectFact-like objects (name / category / industry / tech /
+    hide_status / slug). Returned newest-opportunity-first: least covered wins.
+    """
+    from collections import defaultdict
+
+    by_industry: dict[str, list] = defaultdict(list)
+    by_category: dict[str, list] = defaultdict(list)
+    by_tech: dict[str, list] = defaultdict(list)
+
+    for p in projects:
+        if getattr(p, "industry", ""):
+            by_industry[p.industry].append(p)
+        if getattr(p, "category", ""):
+            by_category[p.category].append(p)
+        for tech in getattr(p, "tech", []) or []:
+            by_tech[tech].append(p)
+
+    options: list[dict] = []
+    for industry, anchors in by_industry.items():
+        options.append({
+            "axis": "industry", "value": industry,
+            "brief": f"software for the {industry} sector",
+            "anchors": anchors,
+        })
+    for category, anchors in by_category.items():
+        if category in _CATEGORY_LABEL:
+            options.append({
+                "axis": "category", "value": category,
+                "brief": _CATEGORY_LABEL[category],
+                "anchors": anchors,
+            })
+    for tech, anchors in by_tech.items():
+        if len(anchors) >= _MIN_TECH_PROJECTS and tech in _BUYER_FACING_TECH:
+            options.append({
+                "axis": "tech", "value": tech,
+                "brief": _BUYER_FACING_TECH[tech],
+                "anchors": anchors,
+            })
+
+    for o in options:
+        o["coverage"] = _coverage(o["value"], posts)
+        o["anchor_count"] = len(o["anchors"])
+
+    # Least-covered first; break ties toward the axis with more real projects behind
+    # it, then alphabetically so the choice is deterministic on a stateless runner.
+    options.sort(key=lambda o: (o["coverage"], -o["anchor_count"], o["value"]))
+    return options
+
+
+def pick_focus(projects: list, posts: list[dict], *, rotation_seed: int = 0) -> dict | None:
+    """Choose this run's topic focus: the least-covered axis with real work behind it.
+
+    `rotation_seed` (a date ordinal) rotates between the few least-covered options so
+    consecutive runs don't all land on the same one before any of them is published.
+    """
+    options = build_focus_options(projects, posts)
+    if not options:
+        return None
+    # Rotate within the least-covered tier, but only across the strongest few — the
+    # tier is already sorted by coverage then by anchor count, so slicing keeps the
+    # best-grounded opportunities in play instead of drifting to thin ones.
+    floor = options[0]["coverage"]
+    tier = [o for o in options if o["coverage"] == floor] or options
+    pool = tier[:_ROTATION_POOL]
+    return pool[rotation_seed % len(pool)]
+
+
+def describe_focus(focus: dict) -> str:
+    """The focus, rendered for the prompt, with its real anchor projects."""
+    if not focus:
+        return ""
+    lines = [f"ASSIGNED FOCUS for this post: {focus['brief']}."]
+    lines.append("Real WizCodes work you can draw on for this focus (reference by name,")
+    lines.append("and never claim live/shipped status for entries marked [no-status]):")
+    for a in focus["anchors"][:6]:
+        tag = " [no-status]" if getattr(a, "hide_status", False) else ""
+        path = f" (/work/{a.slug})" if getattr(a, "slug", "") else ""
+        lines.append(f"  - {a.name}{path}{tag}: {a.description}")
+    return "\n".join(lines)
+
+
 # ── Node: topic strategist ──────────────────────────────────────────────────
 def topic_prompt(
     facts_block: str,
     avoid_recent: list[str],
     blocked: list[str] | None = None,
+    focus: dict | None = None,
 ) -> tuple[str, str]:
     system = (
         "You are a lead generation strategist for a B2B software studio. Your job "
@@ -200,6 +358,7 @@ def topic_prompt(
     # Over-used archetypes are removed from the menu entirely rather than merely
     # discouraged — the model reliably picks whatever is listed, and a "please vary"
     # instruction did not stop four cost breakdowns in a row.
+    focus_block = (describe_focus(focus) + "\n\n") if focus else ""
     blocked = blocked or []
     available = [a for a in ARCHETYPES if a not in blocked] or list(ARCHETYPES)
     archetype_list = "\n".join(f"  - {a}" for a in available)
@@ -216,12 +375,16 @@ def topic_prompt(
 Recently covered topics to avoid repeating:
 {avoid}
 
-Propose ONE blog topic for a BUSINESS OWNER or STARTUP FOUNDER who is evaluating or
+{focus_block}Propose ONE blog topic for a BUSINESS OWNER or STARTUP FOUNDER who is evaluating or
 buying software services — someone who controls a budget but is not a developer.
 
-The topic should target a keyword with commercial or navigational search intent:
-cost analyses, vendor comparisons, ROI breakdowns, build-vs-buy decisions, industry
-guides, common business mistakes, or decision frameworks.
+The topic must sit inside the assigned focus above. Ground it in the real projects
+listed for that focus — that is what makes the post worth reading rather than generic.
+
+Target a keyword with commercial or navigational search intent. Cost and pricing are
+only ONE option among many, and recent posts have leaned on them heavily: prefer
+build-vs-buy decisions, vendor and platform comparisons, industry-specific guides,
+common business mistakes, evaluation criteria, or decision frameworks.
 
 Do NOT propose:
   - Developer tutorials ("how to build X", "implementing Y", "a guide to Z library")
@@ -577,11 +740,23 @@ def humanize_prompt(body_mdx: str) -> tuple[str, str]:
         " You are reviewing a draft for how human and specific it reads, then "
         "improving it. You keep all components and links intact."
     )
-    user = f"""Review this MDX draft for anything that reads as generic AI writing:
-uniform sentence rhythm, filler transitions ("in today's fast-paced world"),
-throat-clearing intros, empty adjectives, or vague claims. Then rewrite it to be
-more human and specific — vary sentence length, cut filler, and make the concrete
-points sharper — WITHOUT changing the components, the internal links, the FAQ
+    user = f"""Review this MDX draft for the specific patterns that make writing read as
+machine-generated. These were measured against the studio's hand-written posts, so
+they are the real tells, not generic advice:
+
+  - The "not X. It's Y" rhetorical flip ( "It isn't about cost. It's about control." )
+    appeared 4 times across the automated posts and ZERO times in the hand-written
+    ones. Use it at most once, ideally never.
+  - Sentences that all start the same way. The automated posts opened 3-5 sentences
+    per article with "The", "Here's", "That's" or "It's"; the hand-written ones did
+    it once. Vary the openings.
+  - Uniform sentence length. Real writing alternates long and short. Put a
+    three-word sentence next to a twenty-five-word one on purpose.
+  - Triplets used as filler ("fast, reliable, and scalable"). Keep them only where
+    all three words carry weight.
+  - Throat-clearing intros, filler transitions, and empty adjectives.
+
+Rewrite to fix those — WITHOUT changing the components, the internal links, the FAQ
 questions/answers, or the core facts.
 
 DRAFT:
@@ -610,10 +785,27 @@ def registry_prompt(body_mdx: str, primary_keyword: str, existing_slugs: list[st
 Primary keyword: "{primary_keyword}"
 Slugs already taken (must not reuse): {existing_slugs}
 
+Write the TITLE for click-through, not just for accuracy. Titles like "Cost to
+Maintain a Mobile App Per Year: Real Numbers" are findable but flat. What works:
+
+  - A curiosity gap that WITHHOLDS THE MECHANISM, never the value. "The One Thing
+    That Doubles App Maintenance Bills" invites a click; "Everything About App
+    Maintenance" does not.
+  - Specific numbers beat vague ones: "7 reasons", not "some reasons".
+  - Brackets or parentheses at the end lift click-through noticeably, e.g.
+    "(And What To Do Instead)", "(With Real Numbers)".
+  - Openers that work: "What Most Founders Get Wrong About...", "What Nobody Tells
+    You About...", "The Real Reason...".
+
+Two hard rules, because a headline that overpromises loses more than it gains:
+  1. The title's core promise MUST be answered in the post's first paragraph. If the
+     reader has to hunt for what you promised, the title is wrong.
+  2. Never imply a number, claim, or outcome the body does not actually contain.
+
 Produce the registry metadata as JSON:
 {{
   "slug": string (kebab-case, contains the primary keyword, unique vs the taken list),
-  "title": string (50-60 chars, includes the primary keyword, compelling, written for a business reader),
+  "title": string (55-65 chars, includes the primary keyword, written for a business reader),
   "description": string (140-160 chars, includes the keyword and a concrete business benefit),
   "tags": [2-4 Title Case tags]
 }}"""

@@ -138,5 +138,7 @@ def make_pipeline(kb: KnowledgeBase | None = None, llm: LLMClient | None = None)
         kb=kb,
         llm=llm,
         recent_posts=snap.existing_posts,
+        projects=snap.projects,
+        recent_visuals=snap.recent_visuals,
     )
     return build_graph(nodes), nodes, kb

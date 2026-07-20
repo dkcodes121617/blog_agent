@@ -20,8 +20,30 @@ ALLOWED_COMPONENTS = {
     # New visual components (Phase 2)
     "StatGrid", "Timeline", "DecisionTree",
 }
+# ── Outbound citations ──
+# The proxy has NO web search (probed and confirmed), so the writer cannot look
+# anything up. Left free, it would invent plausible-looking URLs, and a hallucinated
+# citation is far worse than none. External links are therefore restricted to an
+# allowlist of stable, authoritative sources whose URLs do not churn.
+CITATION_ALLOWLIST = (
+    "developer.apple.com", "developer.android.com", "developers.google.com",
+    "support.google.com", "web.dev", "schema.org", "www.w3.org",
+    "flutter.dev", "docs.flutter.dev", "reactnative.dev", "react.dev",
+    "nextjs.org", "nodejs.org", "docs.python.org", "fastapi.tiangolo.com",
+    "postgresql.org", "www.postgresql.org", "owasp.org", "cheatsheetseries.owasp.org",
+    "gdpr.eu", "www.iso.org", "pypi.org", "github.com",
+    "docs.expo.dev", "stripe.com", "docs.stripe.com", "www.revenuecat.com",
+)
+
+MIN_VISUALS = 3          # was effectively 1; every published post shipped exactly 2
+MIN_VISUAL_TYPES = 2     # stop 4-of-5 posts all being a BarChart
+MIN_WORDS = 1400         # published posts ran 1,172-1,674; thin for cluster content
+
 # Internal route prefixes that actually exist on the site.
-VALID_ROUTE_PREFIXES = ("/services/", "/work/", "/blog/", "/about", "/contact", "/open-source", "/")
+VALID_ROUTE_PREFIXES = (
+    "/services/", "/work/", "/blog/", "/open-source", "/about", "/contact",
+    "/pricing", "/faq", "/testimonials", "/get-started", "/",
+)
 VALID_SERVICE_SLUGS = {"web", "mobile", "ai"}
 
 
@@ -101,12 +123,34 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
         r.warnings.append(f"{len(h2s)} H2 sections — consider tightening to 3-5")
 
     # At least one illustration component (Flow/Compare/Bar/Figure/StatGrid/Timeline/DecisionTree).
-    illustration = any(c in text for c in (
-        "<FlowDiagram", "<CompareDiagram", "<BarChart", "<Figure",
-        "<StatGrid", "<Timeline", "<DecisionTree",
-    ))
-    if not illustration:
-        r.errors.append("missing at least one illustration (FlowDiagram/CompareDiagram/BarChart/Figure/StatGrid/Timeline/DecisionTree)")
+    visual_types = [c for c in (
+        "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
+        "StatGrid", "Timeline", "DecisionTree",
+    ) if f"<{c}" in text]
+    visual_count = sum(text.count(f"<{c}") for c in visual_types)
+    if visual_count == 0:
+        r.errors.append(
+            "missing at least one illustration (FlowDiagram/CompareDiagram/BarChart/"
+            "Figure/StatGrid/Timeline/DecisionTree)")
+    elif visual_count < MIN_VISUALS:
+        r.warnings.append(
+            f"only {visual_count} visual(s) — aim for {MIN_VISUALS}+ spread through the body")
+    if len(visual_types) == 1 and visual_count > 1:
+        r.warnings.append(
+            f"every visual is a <{visual_types[0]}> — vary the type so posts don't all look alike")
+
+    # ── Length ──
+    words = word_count(text)
+    if words < MIN_WORDS:
+        r.warnings.append(f"{words} words — thin for a cluster post, aim for {MIN_WORDS}+")
+
+    # ── Outbound citations must be on the allowlist (no web search = no invented URLs) ──
+    for url in re.findall(r"\]\((https?://[^)]+)\)", text):
+        host = re.sub(r"^https?://", "", url).split("/")[0].lower()
+        if not any(host == a or host.endswith("." + a) for a in CITATION_ALLOWLIST):
+            r.errors.append(
+                f"external link to {host} is not on the citation allowlist — the writer "
+                f"cannot verify sources, so only well-known stable references are allowed")
 
     # ── Unknown components ──
     for tag in set(re.findall(r"<([A-Z]\w+)", text)):

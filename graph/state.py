@@ -21,6 +21,7 @@ class BlogState(TypedDict, total=False):
     rationale: str              # why this topic ranks / is valuable
     archetype: str              # cost_breakdown | vs_comparison | decision_framework | mistake_guide
     intent_type: str            # commercial | informational | navigational
+    focus_brief: str            # the assigned topic focus for this run
     topic_rejected: bool        # pick_topic flagged this topic as developer-facing
 
     # ── uniqueness ──
