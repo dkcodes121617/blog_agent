@@ -139,6 +139,22 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
         r.warnings.append(
             f"every visual is a <{visual_types[0]}> — vary the type so posts don't all look alike")
 
+    # ── Every visual must carry a caption ──
+    # This is the highest-leverage image rule and it is not really about images.
+    # Answer engines and LLM retrieval read TEXT: they never see the rendered chart.
+    # A <BarChart> with a caption is a retrievable fact ("annual maintenance cost
+    # breakdown"); the identical chart without one is invisible to every LLM, and to
+    # Google Images, which ranks on surrounding context far more than on pixels.
+    # The caption also becomes the <figcaption> and the exported filename.
+    for comp in visual_types:
+        for m in re.finditer(re.escape("<" + comp) + r"[\s/>]", text):
+            tail = text[m.start(): m.start() + 600]
+            if 'caption=' not in tail.split("/>")[0]:
+                r.errors.append(
+                    f"<{comp}> has no caption — captions are what search and answer "
+                    f"engines actually read, so every visual needs one")
+                break
+
     # ── Length ──
     words = word_count(text)
     if words < MIN_WORDS:
