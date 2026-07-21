@@ -551,6 +551,7 @@ FORMAT RULES (this blog's contract):
       <DecisionTree caption="..." question="..." yes={{{{ label, outcome }}}} no={{{{ label, outcome }}}} />
       <ConceptDiagram caption="..." loop nodes={{[{{ title: "...", sub: "..." }}, ...]}} />
       <QuadrantMap caption="..." xAxis={{{{ low, high }}}} yAxis={{{{ low, high }}}} quadrants={{{{ topLeft, topRight, bottomLeft, bottomRight }}}} />
+        (a quadrant may be "Label" or {{{{ label: "Label", tone: "good" }}}} to highlight the recommended one)
   - Include the secondary illustration component in a later section.
   - Add 2-3+ internal markdown links from the plan, e.g. [text](/services/web).
   - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As written for a
@@ -562,9 +563,12 @@ HARD MDX RULES:
   - No markdown tables. Use <CompareDiagram> instead.
   - Diagram text must be SHORT or it gets clipped. These are hard limits, because the
     labels render inside fixed-width boxes:
-      * step/node/column labels: 2-3 words, under ~18 characters
+      * step/node/column labels and quadrant cells: 2-3 words, under ~18 characters
       * sub-labels and bullet points: one short phrase, under ~40 characters
+      * DecisionTree yes/no labels: 2-4 words; their "outcome": one sentence under ~60
       * stat values: a number or short range ("$12k", "3-4x", "6 weeks")
+    The site build measures every label geometrically and REJECTS the deploy if one does
+    not fit its box, so an over-long label does not ship broken - it blocks the post.
     Put the detail in the prose around the diagram, not inside the diagram.
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".

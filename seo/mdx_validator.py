@@ -145,6 +145,25 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
         r.warnings.append(
             f"every visual is a <{visual_types[0]}> — vary the type so posts don't all look alike")
 
+    # ── Diagram text must fit the shape it is drawn inside ──
+    # The SVG generators concatenate strings; there is no layout engine, so an over-long
+    # label produces perfectly valid SVG that renders clipped. The site build runs a
+    # geometric fitcheck and REJECTS the deploy, so an over-long label here does not
+    # publish a broken diagram — it blocks the whole post. Catching it at write time
+    # lets the agent shorten the label and carry on instead of failing the pipeline.
+    for prop, limit, what in (
+        ("label", 22, "step/node/column label"),
+        ("title", 22, "node/column title"),
+        ("sub", 44, "sub-label"),
+        ("outcome", 62, "decision outcome"),
+    ):
+        for m in re.finditer(rf'\b{prop}:\s*"([^"]{{1,300}})"', text):
+            value = m.group(1)
+            if len(value) > limit:
+                r.errors.append(
+                    f"{what} too long for its box ({len(value)} chars, limit {limit}): "
+                    f'"{value[:50]}…" — shorten it or move the detail into the prose')
+
     # ── Every visual must carry a caption ──
     # This is the highest-leverage image rule and it is not really about images.
     # Answer engines and LLM retrieval read TEXT: they never see the rendered chart.
