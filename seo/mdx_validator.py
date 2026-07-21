@@ -19,6 +19,8 @@ ALLOWED_COMPONENTS = {
     "BarChart", "Figure", "FAQ", "BlogCTA",
     # New visual components (Phase 2)
     "StatGrid", "Timeline", "DecisionTree",
+    # Illustrations: "how it works" / "where it sits" visuals
+    "ConceptDiagram", "QuadrantMap",
 }
 # ── Outbound citations ──
 # The proxy has NO web search (probed and confirmed), so the writer cannot look
@@ -125,13 +127,13 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     # At least one illustration component (Flow/Compare/Bar/Figure/StatGrid/Timeline/DecisionTree).
     visual_types = [c for c in (
         "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
-        "StatGrid", "Timeline", "DecisionTree",
+        "StatGrid", "Timeline", "DecisionTree", "ConceptDiagram", "QuadrantMap",
     ) if f"<{c}" in text]
     visual_count = sum(text.count(f"<{c}") for c in visual_types)
     if visual_count == 0:
         r.errors.append(
             "missing at least one illustration (FlowDiagram/CompareDiagram/BarChart/"
-            "Figure/StatGrid/Timeline/DecisionTree)")
+            "Figure/StatGrid/Timeline/DecisionTree/ConceptDiagram/QuadrantMap)")
     elif visual_count < MIN_VISUALS:
         r.warnings.append(
             f"only {visual_count} visual(s) — aim for {MIN_VISUALS}+ spread through the body")

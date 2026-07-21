@@ -475,7 +475,7 @@ Produce a JSON plan:
   "primary_illustration": {{"type": "{primary_ill}", "purpose": string, "data_hint": string (what data/content to put in it)}},
   "secondary_illustration": {{"type": "{secondary_ill}", "purpose": string, "data_hint": string}},
   "extra_illustrations": [
-    {{"type": one of BarChart|CompareDiagram|StatGrid|FlowDiagram|Timeline|DecisionTree,
+    {{"type": one of BarChart|CompareDiagram|StatGrid|FlowDiagram|Timeline|DecisionTree|ConceptDiagram|QuadrantMap,
       "purpose": string, "data_hint": string}}
   ],
   "real_projects_to_cite": [names from the facts that genuinely fit this topic]
@@ -530,6 +530,8 @@ FORMAT RULES (this blog's contract):
       <StatGrid caption="..." stats={{[{{ label, value, unit?, context? }}, ...]}} />
       <Timeline caption="..." events={{[{{ date, label, description? }}, ...]}} />
       <DecisionTree caption="..." question="..." yes={{{{ label, outcome }}}} no={{{{ label, outcome }}}} />
+      <ConceptDiagram caption="..." loop nodes={{[{{ title: "...", sub: "..." }}, ...]}} />
+      <QuadrantMap caption="..." xAxis={{{{ low, high }}}} yAxis={{{{ low, high }}}} quadrants={{{{ topLeft, topRight, bottomLeft, bottomRight }}}} />
   - Include the secondary illustration component in a later section.
   - Add 2-3+ internal markdown links from the plan, e.g. [text](/services/web).
   - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As written for a
@@ -542,7 +544,8 @@ HARD MDX RULES:
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".
   - Only use these components: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
-    BarChart, StatGrid, Timeline, DecisionTree, Figure, FAQ, BlogCTA. No imports.
+    BarChart, StatGrid, Timeline, DecisionTree, ConceptDiagram, QuadrantMap,
+    Figure, FAQ, BlogCTA. No imports.
 
 Write only the MDX body, starting with the lead paragraph."""
     return system, user
@@ -558,7 +561,8 @@ _MDX_RULES = """HARD MDX RULES:
   - No markdown tables. Never write a raw '<' or '{' in ordinary prose (write
     "under 200 ms", not the symbol; "the data", not "the {data}").
   - Only these components exist: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
-    BarChart, StatGrid, Timeline, DecisionTree, Figure, FAQ, BlogCTA. No imports."""
+    BarChart, StatGrid, Timeline, DecisionTree, ConceptDiagram, QuadrantMap,
+    Figure, FAQ, BlogCTA. No imports."""
 
 
 def section_intro_prompt(facts_block: str, state: dict) -> tuple[str, str]:
@@ -620,6 +624,8 @@ def section_body_prompt(
             "StatGrid": '<StatGrid caption="..." stats={[{ label: "...", value: "...", unit: "...", context: "..." }, ...]} />',
             "Timeline": '<Timeline caption="..." events={[{ date: "...", label: "...", description: "..." }, ...]} />',
             "DecisionTree": '<DecisionTree caption="..." question="..." yes={{ label: "...", outcome: "..." }} no={{ label: "...", outcome: "..." }} />',
+            "ConceptDiagram": '<ConceptDiagram caption="..." nodes={[{ title: "...", sub: "..." }, ...]} />',
+            "QuadrantMap": '<QuadrantMap caption="..." xAxis={{ low: "...", high: "..." }} yAxis={{ low: "...", high: "..." }} quadrants={{ topLeft: "...", topRight: "...", bottomLeft: "...", bottomRight: "..." }} />',
         }
         syntax = syntax_examples.get(ill_type, syntax_examples["CompareDiagram"])
         extra.append(

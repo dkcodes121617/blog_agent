@@ -263,7 +263,7 @@ def _multiline_field(text: str, key: str) -> str:
 
 _VISUAL_COMPONENTS = (
     "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
-    "StatGrid", "Timeline", "DecisionTree",
+    "StatGrid", "Timeline", "DecisionTree", "ConceptDiagram", "QuadrantMap",
 )
 
 
