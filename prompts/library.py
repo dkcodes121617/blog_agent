@@ -544,7 +544,7 @@ FORMAT RULES (this blog's contract):
     > blockquote for punch. Vary sentence length so it reads human.
   - Include the primary illustration component:
       <FlowDiagram caption="..." steps={{[{{ label: "...", sub: "..." }}, ...]}} />
-      <CompareDiagram caption="..." columns={{[{{ title, tone: "good"|"bad"|"neutral", points: [...] }}]}} />
+      <CompareDiagram caption="..." columns={{[{{ title, tone?: "good"|"bad", points: [...] }}]}} />
       <BarChart caption="..." unit="..." data={{[{{ label, value }}, ...]}} />
       <StatGrid caption="..." stats={{[{{ label, value, unit?, context? }}, ...]}} />
       <Timeline caption="..." events={{[{{ date, label, description? }}, ...]}} />
@@ -552,6 +552,10 @@ FORMAT RULES (this blog's contract):
       <ConceptDiagram caption="..." loop nodes={{[{{ title: "...", sub: "..." }}, ...]}} />
       <QuadrantMap caption="..." xAxis={{{{ low, high }}}} yAxis={{{{ low, high }}}} quadrants={{{{ topLeft, topRight, bottomLeft, bottomRight }}}} />
         (a quadrant may be "Label" or {{{{ label: "Label", tone: "good" }}}} to highlight the recommended one)
+    COLOUR: diagrams are coloured automatically - each column, step, cell or milestone
+    gets its own hue. Only set `tone` when you are genuinely judging one option better
+    ("good") or worse ("bad") than another. Leaving tone off is the normal case and
+    still produces a colourful diagram, so never add a tone just to add colour.
   - Include the secondary illustration component in a later section.
   - Add 2-3+ internal markdown links from the plan, e.g. [text](/services/web).
   - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As written for a
