@@ -450,6 +450,22 @@ Intro hook style: {hook_guidance}
 Most topically-related existing posts (link to 1-2 for topic clustering):
 {related}
 
+Plan THREE to FOUR illustrations for this post, each a DIFFERENT component type. Every
+one is exported as a standalone SVG that Google Images and AI systems index on its own,
+so each is a separate entry point to the article - a post with one chart has one visual
+entry point, a post with four varied visuals has four.
+
+Vary the type deliberately: a post that is all BarCharts looks like every other post
+and adds no new visual surface. Match the type to the content instead - BarChart for
+magnitudes, StatGrid for headline numbers, CompareDiagram for this-vs-that, FlowDiagram
+for a process, Timeline for something that unfolds over time, DecisionTree for a
+branching choice.
+
+Give every illustration a specific, descriptive caption. The caption becomes the
+image's filename, its <title>, and the text answer engines actually read - "Annual
+maintenance cost breakdown" earns search traffic, "Chart 1" earns none.
+
+
 Produce a JSON plan:
 {{
   "working_title": string (natural, ~50-60 chars, includes the primary keyword, sounds like a business article — no "how to build X"),
@@ -458,6 +474,10 @@ Produce a JSON plan:
   "internal_links": [3-4 objects {{"path": "/services/... or /work/... or /blog/... or /contact", "anchor": string}}],
   "primary_illustration": {{"type": "{primary_ill}", "purpose": string, "data_hint": string (what data/content to put in it)}},
   "secondary_illustration": {{"type": "{secondary_ill}", "purpose": string, "data_hint": string}},
+  "extra_illustrations": [
+    {{"type": one of BarChart|CompareDiagram|StatGrid|FlowDiagram|Timeline|DecisionTree,
+      "purpose": string, "data_hint": string}}
+  ],
   "real_projects_to_cite": [names from the facts that genuinely fit this topic]
 }}
 Only use internal link paths that exist in the facts above."""
