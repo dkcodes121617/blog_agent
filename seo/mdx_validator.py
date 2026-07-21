@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# The 11 components registered in src/mdx-components.tsx (the only allowed tags).
+# The 13 components registered in src/mdx-components.tsx (the only allowed tags).
 ALLOWED_COMPONENTS = {
     "KeyTakeaways", "Callout", "FlowDiagram", "CompareDiagram",
     "BarChart", "Figure", "FAQ", "BlogCTA",
@@ -97,6 +97,18 @@ def _prose_lines(mdx: str) -> list[tuple[int, str]]:
 
 def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationReport:
     r = ValidationReport()
+    # Distinguish "caller opted out of link-checking" (None) from "caller checked and
+    # there are genuinely zero known posts" (an empty set). These used to be treated
+    # identically — `known_slugs or set()` collapsed both to `set()`, and the per-link
+    # check below only ran `if known_slugs:` (truthy), so a KB that came back empty
+    # (a skipped/failed ingest, a fresh run before the first post exists, etc.) silently
+    # disabled the check instead of failing loud. That let a draft ship with a /blog/
+    # link to a slug that had never existed (see incident: a draft linked to
+    # "...-in-2025" when the real, only matching post was "...-in-2026") with
+    # validation reporting zero errors. Now an explicitly-empty set still enforces the
+    # check — every /blog/ link fails until a real slug list says otherwise — and only
+    # `None` (the caller never had slugs to check) skips it.
+    check_blog_links = known_slugs is not None
     known_slugs = known_slugs or set()
     text = mdx.strip()
 
@@ -221,14 +233,16 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
         if sm and sm.group(1) not in VALID_SERVICE_SLUGS:
             r.errors.append(f"invalid service link {l} (valid: /services/web|mobile|ai)")
         bm = re.match(r"^/blog/([a-z0-9-]+)$", l)
-        if bm and known_slugs and bm.group(1) not in known_slugs:
+        if bm and check_blog_links and bm.group(1) not in known_slugs:
             # ERROR, not a warning. A /blog/ link to a slug that isn't in the registry
             # is a guaranteed 404 the moment the post goes live, and warnings don't
             # loop back to the writer — so this used to ship silently. Verified safe
             # to tighten: all 16 currently published posts pass this check.
             #
-            # The `known_slugs` guard matters: it is empty on code paths that don't
-            # load the KB, and without it every link would be flagged.
+            # `check_blog_links` (not `known_slugs` truthiness) gates this: only a
+            # caller passing `known_slugs=None` opts out. A caller that passes an
+            # empty set is asserting "zero known posts" and every /blog/ link is
+            # correctly rejected — see the note on the `known_slugs` parameter above.
             r.errors.append(
                 f"blog link {l} points to a slug not in the registry — link an existing "
                 f"post or drop the link"
