@@ -65,8 +65,8 @@ class Config:
     git_author_email: str = os.getenv("GIT_AUTHOR_EMAIL", "business@wizcodes.site")
 
     # ── Cadence ──
-    max_posts_per_day: int = _int("MAX_POSTS_PER_DAY", 2)
-    avg_posts_per_day: float = _float("AVG_POSTS_PER_DAY", 1.3)
+    max_posts_per_day: int = _int("MAX_POSTS_PER_DAY", 1)
+    avg_posts_per_day: float = _float("AVG_POSTS_PER_DAY", 0.3)
     publish_window_start: int = _int("PUBLISH_WINDOW_START", 8)
     publish_window_end: int = _int("PUBLISH_WINDOW_END", 22)
     min_gap_hours: int = _int("MIN_GAP_HOURS", 4)

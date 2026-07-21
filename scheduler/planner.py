@@ -87,47 +87,69 @@ def _weighted_hour(rng: random.Random) -> int:
 _WEEKDAY_MEAN = sum(_WEEKDAY_WEIGHT.values()) / len(_WEEKDAY_WEIGHT)
 
 
-def _roll_post_count(rng: random.Random, weekday: int = 1) -> int:
-    """0, 1, or 2 posts for this day, preserving AVG_POSTS_PER_DAY across the week.
+# Normalised so the weekday weights REDISTRIBUTE volume across the week rather than
+# reducing it.
+_WEEKDAY_MEAN = sum(_WEEKDAY_WEIGHT.values()) / len(_WEEKDAY_WEIGHT)
 
-    `weekday` (Mon=0) shifts volume toward mid-week. The probabilities are solved from
-    the day's target mean rather than hardcoded, because the old version used a fixed
-    15% zero-chance regardless of target: a weekend target of 0.39 posts/day still
-    produced a post 85% of the time, so weekends barely thinned at all.
+
+def _rng_for_week(day: datetime) -> random.Random:
+    """A Random seeded by the ISO week, so every run in a week agrees on its plan."""
+    iso = day.isocalendar()
+    return random.Random(iso[0] * 100 + iso[1])
+
+
+def _posts_this_week(rng: random.Random) -> int:
+    """How many posts this week — centred on the weekly target.
+
+    Rolled PER WEEK rather than per day. Independent daily coin-flips hit the right
+    long-run mean but clustered badly: at ~0.3/day a simulated two years produced 12%
+    completely empty weeks and a 20-day silence. A weekly roll keeps the same average
+    while guaranteeing the gap between posts stays sane, which is what actually matters
+    for crawl rhythm and for looking like a publication rather than a cron job.
     """
-    target = min(CONFIG.avg_posts_per_day, CONFIG.max_posts_per_day)
-    target *= _WEEKDAY_WEIGHT.get(weekday, 1.0) / _WEEKDAY_MEAN
-    target = max(0.0, min(float(CONFIG.max_posts_per_day), target))
+    target = CONFIG.avg_posts_per_day * 7
+    lo = max(1, int(target))          # never a silent week
+    # Distribute the fractional part so the long-run mean matches the target exactly.
+    return lo + (1 if rng.random() < (target - lo) else 0)
 
-    if CONFIG.max_posts_per_day < 2:
-        return 1 if rng.random() < target else 0
 
-    # Solve p0/p1/p2 so that p1 + 2*p2 == target. A small floor on p0 keeps some days
-    # genuinely quiet, which reads as human rather than machine-regular.
-    p_zero_pref = 0.10
-    p_two = max(0.0, target - 1.0 + p_zero_pref)
-    p_one = max(0.0, min(1.0 - p_two, target - 2 * p_two))
-    p_zero = max(0.0, 1.0 - p_one - p_two)
+def _publish_days(day: datetime) -> dict[int, int]:
+    """Map of {weekday -> posts} for the week containing `day`.
 
-    r = rng.random()
-    if r < p_zero:
-        return 0
-    if r < p_zero + p_two:
-        return 2
-    return 1
+    Days are drawn without replacement, weighted toward mid-week, so the week's posts
+    land on different days and cluster Tue-Thu.
+    """
+    rng = _rng_for_week(day)
+    n = min(_posts_this_week(rng), 7 * CONFIG.max_posts_per_day)
+
+    weekdays = list(range(7))
+    weights = [_WEEKDAY_WEIGHT.get(d, 1.0) for d in weekdays]
+    chosen: dict[int, int] = {}
+    for _ in range(n):
+        available = [(d, w) for d, w in zip(weekdays, weights)
+                     if chosen.get(d, 0) < CONFIG.max_posts_per_day]
+        if not available:
+            break
+        days_, ws = zip(*available)
+        pick = rng.choices(days_, weights=ws, k=1)[0]
+        chosen[pick] = chosen.get(pick, 0) + 1
+    return chosen
 
 
 def plan_times(now_local: datetime | None = None) -> list[datetime]:
-    """The deterministic target times for today (sorted, spaced >= MIN_GAP_HOURS)."""
+    """The deterministic target times for today (sorted, spaced >= MIN_GAP_HOURS).
+
+    The week decides WHICH days publish; the day decides WHAT TIME. Both are seeded
+    from the calendar, so a stateless runner reaches the same answer on every run.
+    """
     tz = _tz()
     now_local = now_local or datetime.now(tz)
     day = now_local
-    rng = _rng_for(day)
-    n = _roll_post_count(rng, day.weekday())
+    n = _publish_days(day).get(day.weekday(), 0)
     if n == 0:
         return []
 
-    start_h, end_h = CONFIG.publish_window_start, CONFIG.publish_window_end
+    rng = _rng_for(day)
     gap = timedelta(hours=CONFIG.min_gap_hours)
     picks: list[datetime] = []
     for _ in range(60):
