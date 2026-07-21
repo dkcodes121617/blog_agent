@@ -118,11 +118,15 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     if "<BlogCTA" not in text:
         r.errors.append("missing required <BlogCTA ... />")
 
+    # Section count scales with length. The old 3-5 range was set when posts ran ~700
+    # words; at the current 1,400+ minimum that means ~300 words per section, which
+    # reads as a wall. More sections also means more question-style headings, which is
+    # what answer engines extract.
     h2s = re.findall(r"^##\s+(.+)$", text, re.MULTILINE)
-    if len(h2s) < 3:
-        r.errors.append(f"needs 3-5 H2 sections, found {len(h2s)}")
-    elif len(h2s) > 6:
-        r.warnings.append(f"{len(h2s)} H2 sections — consider tightening to 3-5")
+    if len(h2s) < 4:
+        r.errors.append(f"needs 4-8 H2 sections, found {len(h2s)}")
+    elif len(h2s) > 8:
+        r.warnings.append(f"{len(h2s)} H2 sections — consider merging a few")
 
     # At least one illustration component (Flow/Compare/Bar/Figure/StatGrid/Timeline/DecisionTree).
     visual_types = [c for c in (
