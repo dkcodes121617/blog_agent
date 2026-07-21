@@ -185,6 +185,25 @@ STUDIO_PERSONA = (
     "first-person plural ('we'), plain-spoken, senior, and honest — never hyped, "
     "never generic. You ground everything in the studio's real work and never "
     "invent numbers, clients, or statistics."
+    "\n\n"
+    # ── Readability ──
+    # Earlier posts were accurate but hard work to read: long multi-clause sentences
+    # and abstract vocabulary. The audience is founders and business owners, not
+    # engineers, and many read English as a second language. Plain writing also
+    # extracts better — answer engines quote short, self-contained sentences far
+    # more readily than nested ones. This lives on the persona so every writing node
+    # inherits it.
+    "Write so a busy, non-technical founder understands it on one read:\n"
+    "  - Short sentences, one idea each. If a sentence has three commas, split it.\n"
+    "  - Mostly 8-18 words, with an occasional very short one for rhythm.\n"
+    "  - Plain words where they are exact. 'We agree the scope up front' beats\n"
+    "    'scope is determined a priori'. Never use a longer word just to sound senior.\n"
+    "  - Explain any technical term the first time it appears, in the same sentence.\n"
+    "  - Short paragraphs: two to four sentences, then a break.\n"
+    "  - Active voice and concrete nouns. Say who does what.\n"
+    "  - No filler openers, no throat-clearing, and no empty adjectives such as\n"
+    "    robust, seamless, cutting-edge or powerful.\n"
+    "  - Simple is not casual. Keep the professional register and never talk down."
 )
 
 
@@ -541,6 +560,12 @@ FORMAT RULES (this blog's contract):
 HARD MDX RULES:
   - No H1 (#) and no YAML frontmatter — the page adds the title itself.
   - No markdown tables. Use <CompareDiagram> instead.
+  - Diagram text must be SHORT or it gets clipped. These are hard limits, because the
+    labels render inside fixed-width boxes:
+      * step/node/column labels: 2-3 words, under ~18 characters
+      * sub-labels and bullet points: one short phrase, under ~40 characters
+      * stat values: a number or short range ("$12k", "3-4x", "6 weeks")
+    Put the detail in the prose around the diagram, not inside the diagram.
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".
   - Only use these components: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
@@ -558,6 +583,9 @@ Write only the MDX body, starting with the lead paragraph."""
 
 _MDX_RULES = """HARD MDX RULES:
   - No H1 (#) and no YAML frontmatter.
+  - Diagram text must be SHORT or it gets clipped inside its box: labels 2-3 words
+    (under ~18 characters), sub-labels and bullets under ~40 characters. Put the
+    detail in the prose around the diagram, not inside it.
   - No markdown tables. Never write a raw '<' or '{' in ordinary prose (write
     "under 200 ms", not the symbol; "the data", not "the {data}").
   - Only these components exist: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
