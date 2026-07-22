@@ -192,6 +192,33 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
                     f"engines actually read, so every visual needs one")
                 break
 
+    # ── Component prop shapes ──
+    # The contract checks above verify which components appear and how long their
+    # labels are; nothing checked that their DATA was the shape the component
+    # expects. That gap shipped a post whose BarChart was multi-series —
+    #
+    #   { label: "1K tickets/mo", "SaaS subscription": 18000, "Custom build": 45000 }
+    #
+    # — against a component documented as single-series {label, value}. Every
+    # `value` was undefined, `.toLocaleString()` threw at prerender, and one bad
+    # chart in one post blocked every deploy of the entire site until a human
+    # found it. The site now renders defensively, but the real fix is not writing
+    # it: a chart the component silently drops is a chart the reader never sees,
+    # and the post was written as though it were there.
+    for m in re.finditer(r"<BarChart\b[\s\S]*?/>", text):
+        block = m.group(0)
+        entries = re.findall(r"\{[^{}]*\}", block)
+        if not entries:
+            r.errors.append("<BarChart> has no data entries")
+            continue
+        for entry in entries:
+            if not re.search(r"\blabel\s*:", entry):
+                r.errors.append(f"<BarChart> entry has no `label`: {entry[:70]}")
+            if not re.search(r"\bvalue\s*:\s*-?[\d.]+", entry):
+                r.errors.append(
+                    "<BarChart> is single-series and needs `value: <number>` on every "
+                    f"entry. Multi-series data breaks the build. Got: {entry[:70]}")
+
     # ── Length ──
     words = word_count(text)
     if words < MIN_WORDS:
