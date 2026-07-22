@@ -26,6 +26,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      # write, so the heartbeat step below can commit to THIS repo. See the note
+      # on that step: without a commit, GitHub disables the schedule.
+      contents: write
     steps:
       - name: Checkout agent
         uses: actions/checkout@v4
@@ -51,6 +55,12 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-sonnet-4.6
           ANTHROPIC_SMALL_FAST_MODEL: claude-haiku-4.5
+          # Spelled out rather than left to config defaults. Which model wrote a
+          # post is the first thing you want to know when a run goes wrong, and
+          # reading it out of config.py at the time of the run is not possible
+          # after the fact. The case study workflow already does this.
+          ANTHROPIC_STRATEGY_MODEL: claude-opus-4-8
+          INDEXNOW_KEY: 2df4018dbb1444e6bc48faf84fc0ff39
           # NOTE: the secret is named PUBLISH_TOKEN (Actions reserves the name
           # GITHUB_TOKEN), but the app reads the GITHUB_TOKEN env var — so we map it.
           GITHUB_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
@@ -74,3 +84,33 @@ jobs:
           else
             python main.py
           fi
+
+      # ── Heartbeat: keep the schedule alive, and log that it fired ──
+      # GitHub disables a scheduled workflow after ~60 days of repository
+      # INACTIVITY, and inactivity means no commits — workflow runs do not count.
+      # This agent commits to the SITE repo and never to its own, so the hourly
+      # cron would have silently switched itself off around day 60, with no
+      # failure and no notification. The hourly schedule makes that WORSE, not
+      # better: nothing about running often makes the repo look active.
+      #
+      # Throttled to one commit a day. The runner checks out committed state, so
+      # a line already bearing today's date means today's heartbeat landed and
+      # this run has nothing to add — that check is what keeps 24 fires a day
+      # from becoming 24 commits a day.
+      - name: Heartbeat
+        if: always() && github.event_name == 'schedule'
+        run: |
+          mkdir -p .runs
+          TODAY=$(date -u '+%Y-%m-%d')
+          if grep -q "^$TODAY " .runs/history.log 2>/dev/null; then
+            echo "heartbeat: $TODAY already recorded — nothing to commit"
+            exit 0
+          fi
+          echo "$TODAY $(date -u '+%H:%M UTC')  run=${{ github.run_id }}  outcome=${{ job.status }}" >> .runs/history.log
+          tail -n 400 .runs/history.log > .runs/history.tmp
+          mv .runs/history.tmp .runs/history.log
+          git config user.name "WizCodes Blog Bot"
+          git config user.email "business@wizcodes.site"
+          git add .runs/history.log
+          git diff --staged --quiet || git commit -m "chore: run log $TODAY"
+          git push

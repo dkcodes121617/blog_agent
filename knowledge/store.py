@@ -117,6 +117,35 @@ class KnowledgeBase:
         self._save()
         log.info("KB added slug=%s (now %d entries)", slug, len(self.ledger))
 
+    def prune_to(self, live_slugs: set[str]) -> list[str]:
+        """Drop every entry whose slug is no longer a real post. Returns what went.
+
+        The KB only ever grew. `add()` is idempotent and `ingest_existing` skipped
+        slugs it already had, so a post that was renamed or deleted stayed in the
+        ledger forever — and `known_slugs` comes straight from `all_slugs()`.
+
+        That is not hypothetical. The ledger held
+        `what-custom-software-actually-costs-in-2025` and
+        `react-native-vs-flutter-2025` long after both were republished as -2026.
+        The MDX validator checks every /blog/ link against `known_slugs`, so a
+        draft linking to a phantom passed validation and would 404 on publish —
+        which is verbatim the incident its own comment documents.
+
+        The matrix rows are positional, so they are filtered with the ledger in one
+        pass; rebuilding them separately is how the two fall out of alignment.
+        """
+        keep = [i for i, e in enumerate(self.ledger) if e.slug in live_slugs]
+        dropped = [e.slug for e in self.ledger if e.slug not in live_slugs]
+        if not dropped:
+            return []
+
+        self.ledger = [self.ledger[i] for i in keep]
+        if self.matrix is not None and len(self.matrix):
+            self.matrix = self.matrix[keep] if keep else None
+        self._save()
+        log.warning("KB pruned %d stale slug(s): %s", len(dropped), ", ".join(dropped))
+        return dropped
+
     # ── queries ──
     def max_similarity(self, text: str) -> tuple[float, str | None]:
         """Highest cosine similarity of `text` vs anything in the KB, + its slug."""

@@ -250,6 +250,11 @@ def _extract_posts(posts_ts: str) -> list[dict]:
                 "title": _f(text, "title"),
                 "description": _multiline_field(text, "description"),
                 "tags": tags,
+                # Recorded by the publisher from RUN 1 onward. Empty for the 13 posts
+                # that predate it, which is why blocked_archetypes still falls back to
+                # inferring from the title — but a guess is a guess, and rotation was
+                # steering off one for every post it had ever written.
+                "archetype": _f(text, "archetype"),
             }
         )
     return out

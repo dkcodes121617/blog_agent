@@ -88,8 +88,16 @@ def blocked_archetypes(recent_posts: list[dict], *, lookback: int = 4) -> list[s
         return []
 
     window = recent_posts[:lookback]
+    # Prefer the archetype the publisher RECORDED over one reverse-engineered from
+    # the title. Rotation exists to stop four cost-breakdowns in a row, and it was
+    # deciding that from a regex over headlines — so a decision_framework post
+    # titled "What custom software actually costs" was counted as a cost_breakdown
+    # and blocked the wrong thing. Inference stays as the fallback for posts
+    # published before the field existed.
     inferred = [
-        infer_archetype(p.get("title", ""), p.get("description", "")) for p in window
+        p.get("archetype")
+        or infer_archetype(p.get("title", ""), p.get("description", ""))
+        for p in window
     ]
 
     blocked = {inferred[0]}
@@ -558,7 +566,7 @@ FORMAT RULES (this blog's contract):
     still produces a colourful diagram, so never add a tone just to add colour.
   - Include the secondary illustration component in a later section.
   - Add 2-3+ internal markdown links from the plan, e.g. [text](/services/web).
-  - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (3-5 real Q&As written for a
+  - End with <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> (4-6 real Q&As written for a
     business buyer — questions about cost, time, risk, ownership — not technical questions)
     and then <BlogCTA />.
 
@@ -720,7 +728,7 @@ STUDIO FACTS (ground answers in these; never invent):
 {facts_block}
 
 Write, in order:
-  1. A <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> with exactly 3-4 real questions
+  1. A <FAQ items={{[{{ q: "...", a: "..." }}, ...]}} /> with 4-6 real questions
      a BUSINESS BUYER would search about this topic — questions about cost, time,
      risk, ownership, or decision-making — NOT technical implementation questions.
      Each answer should be self-contained in 1-2 sentences.

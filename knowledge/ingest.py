@@ -2,8 +2,12 @@
 
 Reads the 12 real posts from the site repo — registry metadata (posts.ts) plus
 each `<slug>.mdx` body — and embeds them into the KB so the very first generated
-post is already checked against everything that exists. Safe to run repeatedly;
-it skips slugs already in the ledger.
+post is already checked against everything that exists.
+
+AUTHORITATIVE, not additive. posts.ts is the source of truth: anything in the
+ledger that is not in posts.ts is removed. It used to only ever append, so a
+renamed post lingered forever and `known_slugs` reported URLs that no longer
+existed — the MDX validator then happily passed a /blog/ link straight to a 404.
 """
 from __future__ import annotations
 
@@ -28,6 +32,11 @@ def ingest_existing(site_dir: Path | str | None = None) -> KnowledgeBase:
     snap = build_snapshot(site_dir)
     kb = KnowledgeBase()
 
+    # Prune BEFORE adding, so a rename lands as one clean replacement rather than
+    # leaving the old slug alive alongside the new one.
+    live = {p["slug"] for p in snap.existing_posts}
+    kb.prune_to(live)
+
     added = 0
     for post in snap.existing_posts:
         slug = post["slug"]
@@ -43,7 +52,8 @@ def ingest_existing(site_dir: Path | str | None = None) -> KnowledgeBase:
         )
         added += 1
 
-    log.info("ingest complete: +%d posts, KB now has %d entries", added, len(kb))
+    log.info("ingest complete: +%d post(s), KB now mirrors posts.ts with %d entries",
+             added, len(kb))
     return kb
 
 

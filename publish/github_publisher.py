@@ -77,6 +77,13 @@ def ensure_repo() -> Repo:
 def _render_registry_entry(state: dict, iso_date: str) -> str:
     """Build the TypeScript object literal for posts.ts (matches the file's style)."""
     tags = ", ".join(f"'{_esc(t)}'" for t in state["tags"])
+    # Record the shape this post was written as, so the NEXT run's rotation reads a
+    # fact instead of re-deriving it from the title with a regex. Omitted entirely
+    # when unset rather than written as '' — an empty string is a value the reader
+    # would have to special-case, whereas an absent optional field already means
+    # "fall back to inference".
+    archetype = _esc(state.get("archetype", ""))
+    archetype_line = f"    archetype: '{archetype}',\n" if archetype else ""
     return (
         "  {\n"
         f"    slug: '{_esc(state['slug'])}',\n"
@@ -86,6 +93,7 @@ def _render_registry_entry(state: dict, iso_date: str) -> str:
         f"    date: '{iso_date}',\n"
         f"    tags: [{tags}],\n"
         f"    readingMinutes: {int(state['reading_minutes'])},\n"
+        f"{archetype_line}"
         "  },\n"
     )
 

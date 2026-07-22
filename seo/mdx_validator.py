@@ -37,6 +37,12 @@ CITATION_ALLOWLIST = (
     "docs.expo.dev", "stripe.com", "docs.stripe.com", "www.revenuecat.com",
 )
 
+# FAQ items are authored as JSX object literals with DOUBLE quotes, unlike the
+# single-quoted registry entries — `q: "…", a: "…"`. Both orders are accepted
+# because the writer is a model, not a serialiser.
+_FAQ_ITEM = re.compile(
+    r'\{\s*q:\s*"((?:[^"\\]|\\.)*)"\s*,\s*a:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\}')
+
 MIN_VISUALS = 3          # was effectively 1; every published post shipped exactly 2
 MIN_VISUAL_TYPES = 2     # stop 4-of-5 posts all being a BarChart
 MIN_WORDS = 1400         # published posts ran 1,172-1,674; thin for cluster content
@@ -125,8 +131,29 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     # ── Required blocks ──
     if "<KeyTakeaways" not in text:
         r.errors.append("missing required <KeyTakeaways ... />")
+    # Only PRESENCE was ever checked, so a post with one question satisfied the
+    # rule. The FAQ is the most extractable block on the page — a question with a
+    # self-contained answer under it is precisely the shape an answer engine
+    # quotes — so its size is not cosmetic.
+    #
+    # The bounds are 3-8, NOT the 3-5 the prompt used to ask for. Backtesting the
+    # rule against the 13 published posts rejected 11 of them: the writer settles
+    # on 6 questions and 6 is a good FAQ. A validator that fails five-sixths of
+    # your own live content is measuring the wrong thing. 3 is the real floor
+    # (below that the block is not worth its heading) and 8 is a padding guard.
     if "<FAQ" not in text:
         r.errors.append("missing required <FAQ ... />")
+    else:
+        faq = _FAQ_ITEM.findall(text)
+        if not 3 <= len(faq) <= 8:
+            r.errors.append(f"<FAQ> has {len(faq)} question(s) — needs 3-8")
+        for q, a in faq:
+            if not q.rstrip().endswith("?"):
+                r.errors.append(f"FAQ entry is not a question: {q[:60]!r}")
+            if len(a) < 120:
+                r.errors.append(
+                    f"FAQ answer to {q[:50]!r} is {len(a)} chars — too short to be "
+                    f"quoted on its own, which is the only thing this block is for")
     if "<BlogCTA" not in text:
         r.errors.append("missing required <BlogCTA ... />")
 
@@ -153,9 +180,14 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     elif visual_count < MIN_VISUALS:
         r.warnings.append(
             f"only {visual_count} visual(s) — aim for {MIN_VISUALS}+ spread through the body")
-    if len(visual_types) == 1 and visual_count > 1:
+    # MIN_VISUAL_TYPES was declared and never read: the check below was hardcoded to
+    # `== 1`, so a post with three BarCharts and one BarChart-shaped StatGrid passed
+    # the variety rule it exists to enforce. Comparing against the constant is what
+    # the constant was for, and it makes the threshold tunable in one place.
+    if 0 < len(visual_types) < MIN_VISUAL_TYPES and visual_count > 1:
         r.warnings.append(
-            f"every visual is a <{visual_types[0]}> — vary the type so posts don't all look alike")
+            f"all {visual_count} visuals are <{visual_types[0]}> — use at least "
+            f"{MIN_VISUAL_TYPES} different types so posts don't all look alike")
 
     # ── Diagram text must fit the shape it is drawn inside ──
     # The SVG generators concatenate strings; there is no layout engine, so an over-long
