@@ -8,8 +8,8 @@ Flow (assembled in graph/build.py):
 
 Conditional edges (in build.py) implement the self-correcting loops:
   - topic too similar  -> back to pick_topic (up to N)
-  - validation errors  -> back to write (up to N)
-  - factcheck issues   -> back to write (up to N)
+  - validation errors  -> surgical repair (up to N), then a full rewrite (up to N)
+  - factcheck issues   -> surgical fix_claims (up to N), then publish the valid draft
   - final near-dup     -> abort (publish nothing)
 """
 from __future__ import annotations
@@ -24,14 +24,32 @@ from knowledge.store import KnowledgeBase
 from llm.client import LLMClient, LLMError, LLMTransient
 from llm.sanitize import sanitize_prose
 from prompts import library as P
-from seo.mdx_validator import reading_minutes, validate_mdx
+from seo.mdx_repair import (
+    apply_shortenings,
+    clean_caption,
+    insert_captions,
+    repair_deterministic,
+    section_heading_before,
+)
+from seo.mdx_validator import (
+    MIN_H2_SECTIONS,
+    overlong_diagram_text,
+    reading_minutes,
+    uncaptioned_visuals,
+    validate_mdx,
+)
 
 log = logging.getLogger("agent.nodes")
 
 MAX_TOPIC_ATTEMPTS = 4
 MAX_REVISIONS = 2          # full rewrites for MDX-contract errors (rare)
+# Surgical string-level repairs per draft. Cheap (one small JSON call), and unlike a
+# rewrite it strictly reduces the error count or is discarded — so the budget exists
+# to bound a proxy that keeps failing, not to bound the repair itself.
+REPAIR_BUDGET = 3
 FIXCLAIMS_BUDGET = 2      # surgical fact-check fixes before we ship a valid draft
 HUMANIZE_MIN_SCORE = 70
+CAPTION_MAX_CHARS = 110
 
 
 class Nodes:
@@ -172,8 +190,18 @@ class Nodes:
         rev = state.get("revision", 0) + 1
         outline = state["outline"]
         h2s = [h for h in (outline.get("h2s") or []) if isinstance(h, str) and h.strip()][:5]
-        if not h2s:
-            h2s = ["How it works", "What to watch for", "Getting started"]
+        # An outline with too few sections is not something a rewrite can fix: `write`
+        # reuses the SAME outline, so a three-section plan produces a three-section
+        # draft every time, fails the contract every time, and burns the whole revision
+        # budget producing identical invalid posts. Top it up here instead.
+        if len(h2s) < MIN_H2_SECTIONS:
+            have = {h.strip().lower() for h in h2s}
+            filler = [h for h in P.h2_scaffold(state.get("archetype", ""),
+                                               state.get("primary_keyword", ""))
+                      if h.strip().lower() not in have]
+            log.info("  outline returned %d H2(s) — topping up to %d from the %s scaffold",
+                     len(h2s), MIN_H2_SECTIONS, state.get("archetype", "default"))
+            h2s += filler[: MIN_H2_SECTIONS - len(h2s)]
         log.info("node: write (revision %d) — sectioned, %d sections", rev, len(h2s))
 
         # Rewrite feedback (if we looped back) — appended to every chunk prompt.
@@ -192,23 +220,37 @@ class Nodes:
         # 2) one call per H2 section
         for i, h2 in enumerate(h2s):
             sysp, usrp = P.section_body_prompt(self.facts_block, state, h2, assignments[i])
-            parts.append(self._chunk(sysp, usrp, feedback, max_tokens=1400, label=f"h2[{i}]"))
+            parts.append(self._chunk(sysp, usrp, feedback, max_tokens=1400,
+                                     label=f"h2[{i}]", heading=h2))
         # 3) closing (FAQ + BlogCTA)
         parts.append(self._chunk(*P.section_closing_prompt(self.facts_block, state),
                                  feedback, max_tokens=1200, label="closing"))
 
         body = "\n\n".join(p.strip() for p in parts if p.strip())
+        # A fresh draft gets a fresh repair budget; the best-draft bookkeeping in
+        # validate() deliberately survives, so a rewrite that comes back worse than
+        # what we already had can be discarded rather than inherited.
         return {"body_mdx": sanitize_prose(body), "revision": rev,
-                "validation_errors": [], "factcheck_issues": []}
+                "validation_errors": [], "factcheck_issues": [], "repair_attempts": 0}
 
-    def _chunk(self, system: str, user: str, feedback: str, *, max_tokens: int, label: str) -> str:
+    def _chunk(self, system: str, user: str, feedback: str, *, max_tokens: int,
+               label: str, heading: str | None = None) -> str:
         """Generate one short section; sanitize its fences/encoding. Short calls are
         far less likely to hit the proxy's 502/timeout window, and each retries
         independently, so a bad moment costs one section, not the whole article."""
         if feedback:
             user = user + feedback
         raw = self.llm.complete(system=system, user=user, max_tokens=max_tokens, temperature=0.8)
-        return sanitize_prose(raw)
+        text = sanitize_prose(raw)
+        if heading and not re.search(r"^##\s+", text, re.MULTILINE):
+            # The prompt asks for the "## …" line and the model usually writes it —
+            # but "usually" is the whole problem. A section that comes back without
+            # its heading silently costs the post an H2, and the draft then fails a
+            # section-count rule that no rewrite can fix, because the outline it
+            # rewrites from was never the thing at fault.
+            log.info("  %s: model omitted its H2 — restoring %r", label, heading)
+            text = f"## {heading}\n\n{text}"
+        return text
 
     @staticmethod
     def _assign_sections(outline: dict, h2s: list[str], used_visuals: list[str] | None = None) -> list[dict]:
@@ -305,13 +347,120 @@ class Nodes:
             log.info("  fix_claims result failed validation; keeping prior body")
         return out
 
+    # ── surgical MDX repair ──
+    # The counterpart to fix_claims, for contract violations instead of claims. It
+    # asks the model for replacement STRINGS and splices them in here, so the body
+    # outside the flagged values is byte-identical and the pass cannot introduce the
+    # fresh violations that made whole-draft rewrites diverge.
+    def repair(self, state: BlogState) -> dict:
+        attempts = state.get("repair_attempts", 0) + 1
+        body = state["body_mdx"]
+        before = len(state.get("validation_errors", []))
+        items = self._repair_items(body)
+        log.info("node: repair (attempt %d, %d error(s), %d string(s) to rewrite)",
+                 attempts, before, len(items))
+
+        written: dict[int, str] = {}
+        if items:
+            try:
+                system, user = P.shorten_labels_prompt(items)
+                data = self.llm.complete_json(system=system, user=user,
+                                              max_tokens=800, attempts=2)
+                rows = data if isinstance(data, list) else (data or {}).get("items", [])
+                for row in rows:
+                    if isinstance(row, dict) and row.get("text") is not None:
+                        try:
+                            written[int(row["id"])] = str(row["text"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+            except (LLMError, LLMTransient, ValueError) as e:
+                # Not fatal: the deterministic pass below still clears these errors,
+                # it just writes blunter labels than the model would have.
+                log.warning("  repair: model pass failed (%s) — falling back to "
+                            "deterministic shortening", str(e)[:120])
+
+        candidate = self._apply_repairs(body, items, written)
+        candidate, notes = repair_deterministic(candidate)
+        for note in notes:
+            log.info("  repair: %s", note)
+
+        report = validate_mdx(candidate, known_slugs=set(state.get("known_slugs", [])))
+        if len(report.errors) >= before:
+            log.info("  repair: no improvement (%d -> %d error(s)) — keeping the prior draft",
+                     before, len(report.errors))
+            return {"repair_attempts": attempts}
+        log.info("  repair: %d -> %d error(s)", before, len(report.errors))
+        return {"body_mdx": candidate, "repair_attempts": attempts,
+                "validation_errors": report.errors,
+                "validation_warnings": report.warnings}
+
+    @staticmethod
+    def _repair_items(body: str) -> list[dict]:
+        """The string-level edits this draft needs, as prompt-ready items."""
+        items: list[dict] = []
+        seen: set[str] = set()
+        for prop, value, limit, what in overlong_diagram_text(body):
+            if value in seen:
+                continue
+            seen.add(value)
+            items.append({"id": len(items) + 1, "kind": "label", "prop": prop,
+                          "current": value, "max_chars": limit, "what": what})
+        for component, offset in uncaptioned_visuals(body):
+            items.append({"id": len(items) + 1, "kind": "caption", "component": component,
+                          "max_chars": CAPTION_MAX_CHARS,
+                          "where": section_heading_before(body, offset) or "the opening"})
+        return items
+
+    @staticmethod
+    def _apply_repairs(body: str, items: list[dict], written: dict[int, str]) -> str:
+        """Splice the model's replacement strings into the draft."""
+        labels = {
+            it["current"]: written[it["id"]].strip()
+            for it in items
+            if it["kind"] == "label" and written.get(it["id"], "").strip()
+        }
+        text = apply_shortenings(body, labels)
+        captions = [clean_caption(written.get(it["id"]))
+                    for it in items if it["kind"] == "caption"]
+        # Offsets are recomputed against the shortened text: the label pass above
+        # changed the length of the draft, so the ones collected earlier have moved.
+        targets = uncaptioned_visuals(text)
+        if targets:
+            text = insert_captions(text, targets, captions)
+        return text
+
     # ── validate (deterministic) ──
     def validate(self, state: BlogState) -> dict:
-        log.info("node: validate")
-        report = validate_mdx(state["body_mdx"], known_slugs=set(state.get("known_slugs", [])))
-        log.info("  validation ok=%s errors=%d warnings=%d",
-                 report.ok, len(report.errors), len(report.warnings))
-        return {"validation_errors": report.errors, "validation_warnings": report.warnings}
+        body = state["body_mdx"]
+        report = validate_mdx(body, known_slugs=set(state.get("known_slugs", [])))
+        count = len(report.errors)
+        log.info("node: validate — ok=%s errors=%d warnings=%d",
+                 report.ok, count, len(report.warnings))
+        # The COUNT alone is what CI logged for the nine days this pipeline was
+        # failing, which made a fixable label-length problem look like an opaque
+        # "errors=4". The messages are what tell you whether to change the prompt,
+        # the validator, or nothing at all.
+        for err in report.errors:
+            log.info("    error: %s", err)
+        for warn in report.warnings[:5]:
+            log.info("    warning: %s", warn)
+
+        best = state.get("best_error_count")
+        if best is None or count <= best:
+            return {"validation_errors": report.errors,
+                    "validation_warnings": report.warnings,
+                    "best_body_mdx": body, "best_errors": report.errors,
+                    "best_error_count": count}
+
+        # A rewrite came back WORSE than a draft we already had (observed in CI:
+        # 2 errors -> 4, 3 -> 5). Publishing is the goal, so carry on from the better
+        # draft rather than the newer one, and let it have another repair pass.
+        log.info("    regression — keeping the earlier draft (%d error(s)) over this one (%d)",
+                 best, count)
+        return {"body_mdx": state["best_body_mdx"],
+                "validation_errors": state.get("best_errors", []),
+                "validation_warnings": report.warnings,
+                "repair_attempts": 0}
 
     # ── humanize ──
     # Best-effort polish. This is a longer (whole-body) call, so it's the most

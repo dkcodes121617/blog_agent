@@ -12,11 +12,13 @@ from graph.nodes.content_nodes import (
     HUMANIZE_MIN_SCORE,
     MAX_REVISIONS,
     MAX_TOPIC_ATTEMPTS,
+    REPAIR_BUDGET,
     Nodes,
 )
 from graph.state import BlogState
 from knowledge.store import KnowledgeBase
 from llm.client import LLMClient
+from seo.mdx_repair import repairable
 
 log = logging.getLogger("agent.graph")
 
@@ -36,11 +38,22 @@ def route_after_topic_uniqueness(state: BlogState) -> str:
 
 
 def route_after_validate(state: BlogState) -> str:
-    if state.get("validation_errors"):
-        if state.get("revision", 0) >= MAX_REVISIONS:
-            return "abort"
-        return "rewrite"
-    return "ok"
+    """Prefer editing the draft over rewriting it.
+
+    A rewrite regenerates every diagram in the post, so it swaps one clipped label
+    for another — that is how three consecutive publish days aborted with the
+    revision budget spent. Anything the surgical repairer can reach goes to it
+    first; only structural problems (too few H2s, an unknown component, a malformed
+    BarChart) are worth another full draft.
+    """
+    errors = state.get("validation_errors")
+    if not errors:
+        return "ok"
+    if repairable(errors) and state.get("repair_attempts", 0) < REPAIR_BUDGET:
+        return "repair"
+    if state.get("revision", 0) >= MAX_REVISIONS:
+        return "abort"
+    return "rewrite"
 
 
 def route_after_factcheck(state: BlogState) -> str:
@@ -81,6 +94,7 @@ def build_graph(nodes: Nodes):
     g.add_node("factcheck", nodes.factcheck)
     g.add_node("fix_claims", nodes.fix_claims)
     g.add_node("validate", nodes.validate)
+    g.add_node("repair", nodes.repair)
     g.add_node("humanize", nodes.humanize)
     g.add_node("registry", nodes.build_registry)
     g.add_node("final_uniqueness", nodes.final_uniqueness)
@@ -105,8 +119,10 @@ def build_graph(nodes: Nodes):
     g.add_edge("write", "validate")
     g.add_conditional_edges(
         "validate", route_after_validate,
-        {"ok": "factcheck", "rewrite": "write", "abort": "abort_validate"},
+        {"ok": "factcheck", "repair": "repair", "rewrite": "write",
+         "abort": "abort_validate"},
     )
+    g.add_edge("repair", "validate")
     # Fact-check issues → surgical fix_claims (fast, convergent) → re-validate →
     # re-check. After the budget, a still-valid draft ships anyway (see router).
     g.add_conditional_edges(

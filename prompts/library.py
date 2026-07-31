@@ -142,6 +142,28 @@ _H2_PATTERNS: dict[str, list[str]] = {
     ],
 }
 
+def h2_scaffold(archetype: str, topic: str = "") -> list[str]:
+    """Usable H2 headings for an archetype, as a floor under a thin outline.
+
+    Patterns whose placeholders can't be resolved (the option A/B slots in the
+    comparison scaffold) are dropped rather than shipped with brackets in them,
+    and generic sections are appended so there is always something to top up with.
+    """
+    patterns = _H2_PATTERNS.get(archetype) or _H2_PATTERNS["decision_framework"]
+    out = []
+    for pattern in patterns:
+        heading = pattern.replace("[topic]", topic).strip() if topic else pattern
+        if "[" in heading:
+            continue
+        out.append(heading)
+    out += [
+        "What this means in practice",
+        "What to watch for before you commit",
+        "How to get started",
+    ]
+    return out
+
+
 # Archetype → preferred primary illustration type.
 _PRIMARY_ILLUSTRATION: dict[str, str] = {
     "cost_breakdown": "BarChart",
@@ -496,7 +518,7 @@ maintenance cost breakdown" earns search traffic, "Chart 1" earns none.
 Produce a JSON plan:
 {{
   "working_title": string (natural, ~50-60 chars, includes the primary keyword, sounds like a business article — no "how to build X"),
-  "h2s": [3-5 strings adapted from the archetype pattern above, keyword-rich but natural and buyer-facing],
+  "h2s": [4-5 strings adapted from the archetype pattern above, keyword-rich but natural and buyer-facing — four is the minimum a post can ship with],
   "lsi_keywords": [5-8 semantic variants to weave in naturally — business terms, not technical jargon],
   "internal_links": [3-4 objects {{"path": "/services/... or /work/... or /blog/... or /contact", "anchor": string}}],
   "primary_illustration": {{"type": "{primary_ill}", "purpose": string, "data_hint": string (what data/content to put in it)}},
@@ -801,6 +823,43 @@ NOTHING else — keep every heading, component, link, and FAQ item identical:
 {issue_lines}
 
 Output the full corrected MDX body (same format and components), and nothing else."""
+    return system, user
+
+
+# ── Node: surgical MDX repair ────────────────────────────────────────────────
+def shorten_labels_prompt(items: list[dict]) -> tuple[str, str]:
+    """Ask for replacement STRINGS, not a replacement post.
+
+    The draft is never sent back through the model here. Rewriting the whole body
+    to fix a 29-character label is what made the old repair loop diverge — every
+    rewrite regenerated every diagram and clipped a different one. Asking for the
+    strings alone means the edit is applied in Python, so nothing outside the
+    flagged values can change and the pass always converges.
+    """
+    lines = []
+    for it in items:
+        if it["kind"] == "caption":
+            lines.append(
+                f'  {it["id"]}. A caption for the <{it["component"]}> in the section '
+                f'"{it["where"]}" — up to {it["max_chars"]} characters, describing what '
+                f"the reader learns from it.")
+        else:
+            lines.append(
+                f'  {it["id"]}. Shorten this {it["what"]} to {it["max_chars"]} characters '
+                f'or fewer: "{it["current"]}"')
+    system = (
+        "You write the short text that goes inside diagram boxes for a software "
+        "studio's blog. Diagram labels are cramped, so you write them the way a "
+        "designer would: concrete, specific, and as short as the box allows."
+    )
+    user = f"""These diagram strings need to fit their boxes. Keep the meaning and the
+specifics (numbers, product names, the actual distinction being drawn) — drop the
+filler words, articles and repeated context instead. Plain sentence case, no
+trailing punctuation, no ellipsis.
+
+{chr(10).join(lines)}
+
+Return a JSON array of objects with "id" and "text", one per item above."""
     return system, user
 
 

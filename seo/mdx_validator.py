@@ -46,6 +46,64 @@ _FAQ_ITEM = re.compile(
 MIN_VISUALS = 3          # was effectively 1; every published post shipped exactly 2
 MIN_VISUAL_TYPES = 2     # stop 4-of-5 posts all being a BarChart
 MIN_WORDS = 1400         # published posts ran 1,172-1,674; thin for cluster content
+# Shared with the outline prompt and the writer's top-up. The section count is
+# decided in the outline and a rewrite reuses the same outline, so a floor that
+# only exists here is a floor no retry can ever climb.
+MIN_H2_SECTIONS = 4
+MAX_H2_SECTIONS = 8
+
+# The illustration components, in the order the variety check reports them.
+VISUAL_COMPONENTS = (
+    "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
+    "StatGrid", "Timeline", "DecisionTree", "ConceptDiagram", "QuadrantMap",
+)
+
+# ── Diagram text limits ──
+# (prop, max chars, human name). Shared with seo.mdx_repair, which shortens exactly
+# what this module rejects — two copies of these numbers is how a repair pass ends up
+# "fixing" a label to a length the validator still refuses.
+DIAGRAM_TEXT_LIMITS: tuple[tuple[str, int, str], ...] = (
+    ("label", 22, "step/node/column label"),
+    ("title", 22, "node/column title"),
+    ("sub", 44, "sub-label"),
+    ("outcome", 62, "decision outcome"),
+)
+
+
+def diagram_text_pattern(prop: str) -> re.Pattern[str]:
+    """The matcher for one diagram text prop, e.g. `label: "…"`.
+
+    Exposed so the repairer finds precisely the strings the validator flags — it
+    substitutes on these matches, so a looser pattern would rewrite text nothing
+    complained about and a tighter one would leave the error in place.
+    """
+    return re.compile(rf'\b{prop}:\s*"([^"]{{1,300}})"')
+
+
+def overlong_diagram_text(text: str) -> list[tuple[str, str, int, str]]:
+    """Every diagram string that exceeds its box, as (prop, value, limit, what)."""
+    found = []
+    for prop, limit, what in DIAGRAM_TEXT_LIMITS:
+        for m in diagram_text_pattern(prop).finditer(text):
+            if len(m.group(1)) > limit:
+                found.append((prop, m.group(1), limit, what))
+    return found
+
+
+def uncaptioned_visuals(text: str) -> list[tuple[str, int]]:
+    """(component, offset of its `<`) for every visual missing a `caption=` prop.
+
+    Also shared with the repairer, which inserts the caption at that offset.
+    """
+    out = []
+    for comp in VISUAL_COMPONENTS:
+        if f"<{comp}" not in text:
+            continue
+        for m in re.finditer(re.escape("<" + comp) + r"[\s/>]", text):
+            tail = text[m.start(): m.start() + 600]
+            if "caption=" not in tail.split("/>")[0]:
+                out.append((comp, m.start()))
+    return out
 
 # Internal route prefixes that actually exist on the site.
 VALID_ROUTE_PREFIXES = (
@@ -162,16 +220,14 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     # reads as a wall. More sections also means more question-style headings, which is
     # what answer engines extract.
     h2s = re.findall(r"^##\s+(.+)$", text, re.MULTILINE)
-    if len(h2s) < 4:
-        r.errors.append(f"needs 4-8 H2 sections, found {len(h2s)}")
-    elif len(h2s) > 8:
+    if len(h2s) < MIN_H2_SECTIONS:
+        r.errors.append(
+            f"needs {MIN_H2_SECTIONS}-{MAX_H2_SECTIONS} H2 sections, found {len(h2s)}")
+    elif len(h2s) > MAX_H2_SECTIONS:
         r.warnings.append(f"{len(h2s)} H2 sections — consider merging a few")
 
     # At least one illustration component (Flow/Compare/Bar/Figure/StatGrid/Timeline/DecisionTree).
-    visual_types = [c for c in (
-        "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
-        "StatGrid", "Timeline", "DecisionTree", "ConceptDiagram", "QuadrantMap",
-    ) if f"<{c}" in text]
+    visual_types = [c for c in VISUAL_COMPONENTS if f"<{c}" in text]
     visual_count = sum(text.count(f"<{c}") for c in visual_types)
     if visual_count == 0:
         r.errors.append(
@@ -195,18 +251,10 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     # geometric fitcheck and REJECTS the deploy, so an over-long label here does not
     # publish a broken diagram — it blocks the whole post. Catching it at write time
     # lets the agent shorten the label and carry on instead of failing the pipeline.
-    for prop, limit, what in (
-        ("label", 22, "step/node/column label"),
-        ("title", 22, "node/column title"),
-        ("sub", 44, "sub-label"),
-        ("outcome", 62, "decision outcome"),
-    ):
-        for m in re.finditer(rf'\b{prop}:\s*"([^"]{{1,300}})"', text):
-            value = m.group(1)
-            if len(value) > limit:
-                r.errors.append(
-                    f"{what} too long for its box ({len(value)} chars, limit {limit}): "
-                    f'"{value[:50]}…" — shorten it or move the detail into the prose')
+    for _prop, value, limit, what in overlong_diagram_text(text):
+        r.errors.append(
+            f"{what} too long for its box ({len(value)} chars, limit {limit}): "
+            f'"{value[:50]}…" — shorten it or move the detail into the prose')
 
     # ── Every visual must carry a caption ──
     # This is the highest-leverage image rule and it is not really about images.
@@ -215,14 +263,10 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
     # breakdown"); the identical chart without one is invisible to every LLM, and to
     # Google Images, which ranks on surrounding context far more than on pixels.
     # The caption also becomes the <figcaption> and the exported filename.
-    for comp in visual_types:
-        for m in re.finditer(re.escape("<" + comp) + r"[\s/>]", text):
-            tail = text[m.start(): m.start() + 600]
-            if 'caption=' not in tail.split("/>")[0]:
-                r.errors.append(
-                    f"<{comp}> has no caption — captions are what search and answer "
-                    f"engines actually read, so every visual needs one")
-                break
+    for comp in dict.fromkeys(c for c, _ in uncaptioned_visuals(text)):
+        r.errors.append(
+            f"<{comp}> has no caption — captions are what search and answer "
+            f"engines actually read, so every visual needs one")
 
     # ── Component prop shapes ──
     # The contract checks above verify which components appear and how long their

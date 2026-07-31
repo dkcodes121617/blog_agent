@@ -53,11 +53,14 @@ def main(argv: list[str]) -> int:
     log = logging.getLogger("agent.main")
 
     if "--plan" in argv:
-        from scheduler.planner import plan_times, slots_due
+        from publish.github_publisher import count_posts_by_date
+        from scheduler.planner import missed_slots, plan_times, slots_due
         times = plan_times()
         print(f"Today's plan: {len(times)} post(s) at " +
               (", ".join(t.strftime('%H:%M') for t in times) or "(none)"))
         print(f"Slots due by now: {slots_due()}")
+        site = None if not CONFIG.dry_run else CONFIG.local_site_dir
+        print(f"Missed slots in the last few days: {missed_slots(count_posts_by_date(site))}")
         return 0
 
     force = "--now" in argv
@@ -70,15 +73,17 @@ def main(argv: list[str]) -> int:
     if not force:
         # Cheap decision first. In live mode this needs the repo (to count today's
         # posts); in dry-run, use the local folder.
-        from publish.github_publisher import count_posts_today
+        from publish.github_publisher import count_posts_by_date
         if not CONFIG.dry_run:
             from publish.github_publisher import ensure_repo
             repo = ensure_repo()
             site_dir = repo.working_tree_dir
-        published_today = count_posts_today(site_dir)
+        from scheduler.planner import today_local
+        published_by_date = count_posts_by_date(site_dir)
+        published_today = published_by_date.get(today_local().isoformat(), 0)
 
         from scheduler.planner import is_post_due
-        if not is_post_due(published_today):
+        if not is_post_due(published_today, published_by_date):
             log.info("no post due this run (published today=%d) — exiting", published_today)
             return 0
         log.info("a post is due now (published today=%d) — generating", published_today)

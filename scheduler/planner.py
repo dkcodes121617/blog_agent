@@ -17,12 +17,17 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import CONFIG
 
 log = logging.getLogger("agent.scheduler")
+
+# How far back a missed slot can still be made up. Long enough to survive a bad
+# night or a proxy outage, short enough that recovering from a week-long breakage
+# doesn't dump the backlog on the blog in three days.
+CATCHUP_LOOKBACK_DAYS = 3
 
 
 def _tz() -> ZoneInfo:
@@ -30,6 +35,15 @@ def _tz() -> ZoneInfo:
         return ZoneInfo(CONFIG.schedule_tz)
     except Exception:  # noqa: BLE001
         return ZoneInfo("UTC")
+
+
+def today_local() -> date:
+    """Today's date in the SCHEDULE's timezone, not the runner's.
+
+    Runners are UTC; the plan is IST. Everything that counts posts per day has to
+    agree on where the day boundary is, or the cadence guard miscounts its own work.
+    """
+    return datetime.now(_tz()).date()
 
 
 def _rng_for(day: datetime) -> random.Random:
@@ -174,12 +188,52 @@ def slots_due(now_local: datetime | None = None) -> int:
     return sum(1 for t in plan_times(now_local) if now_local >= t)
 
 
-def is_post_due(published_today: int, now_local: datetime | None = None) -> bool:
-    """A post is due if fewer have been published today than slots that are due."""
+def missed_slots(published_by_date: dict[str, int],
+                 now_local: datetime | None = None) -> int:
+    """Planned posts from the last few days that were never published.
+
+    A plan is per-day and evaporates at midnight, so before this a slot whose runs
+    all failed was simply lost — three consecutive planned posts disappeared that
+    way while every run reported success or failure and nothing reconciled the two.
+    Recomputed from the same deterministic plan, so it needs no stored state.
+    """
+    tz = _tz()
+    now_local = now_local or datetime.now(tz)
+    missed = 0
+    for back in range(1, CATCHUP_LOOKBACK_DAYS + 1):
+        day = now_local - timedelta(days=back)
+        planned = _publish_days(day).get(day.weekday(), 0)
+        if planned:
+            missed += max(0, planned - published_by_date.get(day.date().isoformat(), 0))
+    return missed
+
+
+def is_post_due(published_today: int,
+                published_by_date: dict[str, int] | None = None,
+                now_local: datetime | None = None) -> bool:
+    """Whether to publish on this run.
+
+    Today's due slots, plus at most ONE make-up for a recent day whose post never
+    landed. The make-up is capped at one and only offered inside the publishing
+    window, so recovering from an outage looks like a slightly busier week rather
+    than a backlog dump at 02:00.
+    """
+    tz = _tz()
+    now_local = now_local or datetime.now(tz)
     due = slots_due(now_local)
-    log.info("scheduler: %d slot(s) due so far today, %d already published",
-             due, published_today)
-    return published_today < due and published_today < CONFIG.max_posts_per_day
+    allowance = due
+
+    catchup = 0
+    if published_by_date is not None:
+        in_window = CONFIG.publish_window_start <= now_local.hour < CONFIG.publish_window_end
+        if in_window:
+            catchup = min(1, missed_slots(published_by_date, now_local))
+            allowance += catchup
+
+    log.info("scheduler: %d slot(s) due so far today, %d already published"
+             "%s", due, published_today,
+             f", {catchup} make-up slot for a missed day" if catchup else "")
+    return published_today < allowance and published_today < CONFIG.max_posts_per_day
 
 
 if __name__ == "__main__":

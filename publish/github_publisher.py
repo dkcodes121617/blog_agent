@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date
 from pathlib import Path
 
 from git import Repo
@@ -37,23 +36,28 @@ def _authed_remote() -> str:
     return f"https://x-access-token:{token}@github.com/{CONFIG.github_repo}.git"
 
 
-def count_posts_today(site_dir=None) -> int:
-    """Count posts already published today, read from the site repo's posts.ts.
+def count_posts_by_date(site_dir=None) -> dict[str, int]:
+    """{ISO date -> posts published that day}, read from the site repo's posts.ts.
 
     This is the stateless anti-double-post guard: instead of persisting how many
     we posted, we ask the real source of truth. Works on ephemeral runners.
+
+    The whole map rather than just today's count, because the scheduler also needs
+    to know whether a PREVIOUS day's slot went unfilled — a run that fails leaves
+    no trace anywhere else, and without this the post it should have published is
+    simply lost at midnight.
     """
-    from datetime import date
-    from pathlib import Path
-    from config import CONFIG
     site_dir = Path(site_dir) if site_dir else CONFIG.site_repo_dir
     registry = site_dir / CONFIG.posts_registry_rel
     if not registry.exists():
-        return 0
-    import re
+        return {}
     text = registry.read_text(encoding="utf-8", errors="replace")
-    today = date.today().isoformat()
-    return len(re.findall(rf"date:\s*'{re.escape(today)}'", text))
+    counts: dict[str, int] = {}
+    for iso in re.findall(r"date:\s*'(\d{4}-\d{2}-\d{2})'", text):
+        counts[iso] = counts.get(iso, 0) + 1
+    return counts
+
+
 
 
 def ensure_repo() -> Repo:
@@ -124,7 +128,11 @@ def publish_post(state: dict, kb: KnowledgeBase | None = None) -> str:
     repo = ensure_repo()
     root = Path(repo.working_tree_dir)
     slug = state["slug"]
-    iso_date = state.get("date") or date.today().isoformat()
+    # The scheduler's timezone, not the runner's. The runner is UTC, and stamping a
+    # post with a date the scheduler doesn't recognise as "today" is what would make
+    # the cadence guard miscount its own work either side of midnight IST.
+    from scheduler.planner import today_local
+    iso_date = state.get("date") or today_local().isoformat()
 
     mdx_rel = f"{CONFIG.blog_content_rel}/{slug}.mdx"
     mdx_path = root / mdx_rel

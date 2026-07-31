@@ -50,9 +50,15 @@ class BlogState(TypedDict, total=False):
     # ── validation ──
     validation_errors: list[str]
     validation_warnings: list[str]
+    # The cleanest draft seen so far, kept so a rewrite that comes back worse than
+    # its predecessor can be discarded instead of inherited.
+    best_body_mdx: str
+    best_errors: list[str]
+    best_error_count: int
 
     # ── control / bookkeeping ──
     revision: int               # how many write→validate loops so far
+    repair_attempts: int        # how many surgical MDX repairs on the current draft
     fix_attempts: int           # how many surgical fact-check fixes so far
     topic_attempts: int         # how many topic re-picks so far
     status: str                 # running | aborted | ready | published
