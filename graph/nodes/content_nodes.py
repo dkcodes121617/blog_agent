@@ -14,6 +14,7 @@ Conditional edges (in build.py) implement the self-correcting loops:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import date
@@ -50,6 +51,13 @@ REPAIR_BUDGET = 3
 FIXCLAIMS_BUDGET = 2      # surgical fact-check fixes before we ship a valid draft
 HUMANIZE_MIN_SCORE = 70
 CAPTION_MAX_CHARS = 110
+
+# Cover artwork the site can draw — must match COVER_MOTIFS in
+# wizcodes_next/src/lib/graphics/postCover.mjs. A name this side doesn't recognise
+# there falls back to a slug hash, so a drift here degrades to "less rotation",
+# never to a missing image.
+COVER_MOTIFS = ("arcs", "tiles", "ribbons", "matrix", "stack", "nodes")
+MOTIF_LOOKBACK = 3
 
 
 class Nodes:
@@ -507,7 +515,23 @@ class Nodes:
             "description": data.get("description", "").strip(),
             "tags": data.get("tags", [])[:4],
             "reading_minutes": reading_minutes(state["body_mdx"]),
+            "cover_motif": self._pick_cover_motif(slug),
         }
+
+    def _pick_cover_motif(self, slug: str) -> str:
+        """Which cover artwork the site should draw for this post.
+
+        The site can always derive one from the slug hash, and for the back catalogue
+        it does. Choosing here buys one thing a hash cannot: a hash has no memory, so
+        it happily deals the same motif to three consecutive posts and the blog index
+        shows three covers with the same geometry stacked on top of each other. Same
+        rotation rule the archetype uses, for the same reason.
+        """
+        recent = [p.get("cover_motif") for p in self.recent_posts[:MOTIF_LOOKBACK]]
+        fresh = [m for m in COVER_MOTIFS if m not in recent]
+        pool = fresh or list(COVER_MOTIFS)
+        # Deterministic within the pool, so a re-run of the same post is stable.
+        return pool[int(hashlib.sha1(slug.encode()).hexdigest(), 16) % len(pool)]
 
     # ── final uniqueness ──
     def final_uniqueness(self, state: BlogState) -> dict:

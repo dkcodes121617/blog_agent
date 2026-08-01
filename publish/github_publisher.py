@@ -88,6 +88,11 @@ def _render_registry_entry(state: dict, iso_date: str) -> str:
     # "fall back to inference".
     archetype = _esc(state.get("archetype", ""))
     archetype_line = f"    archetype: '{archetype}',\n" if archetype else ""
+    # Which cover artwork the site renders for this post. Same optional-field contract
+    # as archetype: absent means the site derives one from the slug hash, which is how
+    # every post published before covers existed still has one.
+    motif = _esc(state.get("cover_motif", ""))
+    motif_line = f"    coverMotif: '{motif}',\n" if motif else ""
     return (
         "  {\n"
         f"    slug: '{_esc(state['slug'])}',\n"
@@ -98,6 +103,7 @@ def _render_registry_entry(state: dict, iso_date: str) -> str:
         f"    tags: [{tags}],\n"
         f"    readingMinutes: {int(state['reading_minutes'])},\n"
         f"{archetype_line}"
+        f"{motif_line}"
         "  },\n"
     )
 

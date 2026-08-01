@@ -45,6 +45,7 @@ class BlogState(TypedDict, total=False):
     description: str
     tags: list[str]
     reading_minutes: int
+    cover_motif: str            # which cover artwork the site draws for this post
     date: str                   # ISO YYYY-MM-DD assigned at publish
 
     # ── validation ──

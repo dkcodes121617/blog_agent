@@ -78,13 +78,20 @@ def _write_dry_run(state: dict):
     out = CONFIG.output_dir
     slug = state["slug"]
     (out / f"{slug}.mdx").write_text(state["body_mdx"], encoding="utf-8")
+    # Mirrors what _render_registry_entry actually commits, optional fields included.
+    # A dry-run preview that silently drops fields the real publish writes is a preview
+    # of a different post — archetype and coverMotif are both read back by the next
+    # run's rotation, so their absence here hid exactly the thing worth checking.
+    from scheduler.planner import today_local
     registry_entry = {
         "slug": slug,
         "title": state["title"],
         "description": state["description"],
-        "date": date.today().isoformat(),
+        "date": today_local().isoformat(),
         "tags": state["tags"],
         "readingMinutes": state["reading_minutes"],
+        **({"archetype": state["archetype"]} if state.get("archetype") else {}),
+        **({"coverMotif": state["cover_motif"]} if state.get("cover_motif") else {}),
     }
     (out / f"{slug}.registry.json").write_text(
         json.dumps(registry_entry, indent=2), encoding="utf-8"

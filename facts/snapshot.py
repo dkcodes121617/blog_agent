@@ -255,6 +255,11 @@ def _extract_posts(posts_ts: str) -> list[dict]:
                 # inferring from the title — but a guess is a guess, and rotation was
                 # steering off one for every post it had ever written.
                 "archetype": _f(text, "archetype"),
+                # The cover artwork the site draws for this post. Read back for the
+                # same reason as archetype: the next post's motif is chosen by
+                # rotating away from the recent ones, and rotation needs to know
+                # what "recent" actually was.
+                "cover_motif": _f(text, "coverMotif"),
             }
         )
     return out
