@@ -59,6 +59,27 @@ _COMPACTIONS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 _LEADING_FILLER = re.compile(r"^(the|a|an|your|our|this|that)\s+", re.IGNORECASE)
 _TRAILING_JUNK = re.compile(r"[\s,;:.\-–—]+$")
 
+# A sentence end: terminator + space, not preceded by a digit. The digit guard keeps
+# "$1.5M and up" and "under 1. 5x" from being read as two sentences.
+_SENTENCE_END = re.compile(r"(?<=[^\d])([.!?])\s+")
+
+
+def _first_sentences(text: str, limit: int) -> str | None:
+    """The longest whole-sentence prefix of `text` that fits `limit`, if any.
+
+    Only <Timeline> descriptions are long enough to contain a sentence break, and for
+    them this is the difference between "Django ships an admin panel." and "Django ships
+    an admin panel. FastAPI needs a custom build or a third-party" — a complete thought
+    versus a severed one. Labels have no terminators, so this never fires on them.
+    """
+    best = None
+    for m in _SENTENCE_END.finditer(text):
+        end = m.end(1)  # keep the terminator, drop the space
+        if end > limit:
+            break
+        best = text[:end]
+    return best
+
 
 def shorten(value: str, limit: int) -> str:
     """Fit `value` into `limit` characters, preferring compaction over truncation.
@@ -70,6 +91,12 @@ def shorten(value: str, limit: int) -> str:
     text = re.sub(r"\s+", " ", value).strip()
     if len(text) <= limit:
         return text
+
+    # Dropping a whole trailing sentence beats compacting every word in the ones that
+    # remain, so this is tried before the abbreviations rather than after them.
+    sentences = _first_sentences(text, limit)
+    if sentences:
+        return sentences
 
     for pattern, replacement in _COMPACTIONS:
         if len(text) <= limit:

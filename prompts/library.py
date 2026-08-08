@@ -601,9 +601,16 @@ HARD MDX RULES:
       * sub-labels and bullet points: one short phrase, under ~40 characters
       * DecisionTree yes/no labels: 2-4 words; their "outcome": one sentence under ~60
       * stat values: a number or short range ("$12k", "3-4x", "6 weeks")
+      * Timeline "date": a bare marker, under ~14 characters ("Week 1", "Month 6",
+        "Q3 2026") - never a phrase like "Discovery phase (week 1)"
+      * Timeline "description": ONE short sentence under ~100 characters
     The site build measures every label geometrically and REJECTS the deploy if one does
     not fit its box, so an over-long label does not ship broken - it blocks the post.
     Put the detail in the prose around the diagram, not inside the diagram.
+  - Keep diagrams SPARSE. A diagram is a glance, not a second article: 4-5 Timeline
+    milestones (never more than 6), 3-5 flow steps, 3-4 bullets per compare column.
+    One idea per row. Two milestones that make the same point should be one milestone,
+    and a description carrying two contrasting clauses belongs in the prose instead.
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".
   - Only use these components: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
@@ -622,8 +629,13 @@ Write only the MDX body, starting with the lead paragraph."""
 _MDX_RULES = """HARD MDX RULES:
   - No H1 (#) and no YAML frontmatter.
   - Diagram text must be SHORT or it gets clipped inside its box: labels 2-3 words
-    (under ~18 characters), sub-labels and bullets under ~40 characters. Put the
-    detail in the prose around the diagram, not inside it.
+    (under ~18 characters), sub-labels and bullets under ~40 characters. A Timeline
+    "date" is a bare marker under ~14 characters ("Week 1", "Month 6"); a Timeline
+    "description" is ONE short sentence under ~100 characters. Put the detail in the
+    prose around the diagram, not inside it.
+  - Keep diagrams SPARSE - a diagram is a glance, not a second article. 4-5 Timeline
+    milestones (never more than 6), 3-5 flow steps, 3-4 bullets per compare column,
+    one idea per row.
   - No markdown tables. Never write a raw '<' or '{' in ordinary prose (write
     "under 200 ms", not the symbol; "the data", not "the {data}").
   - Only these components exist: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,

@@ -62,11 +62,24 @@ VISUAL_COMPONENTS = (
 # (prop, max chars, human name). Shared with seo.mdx_repair, which shortens exactly
 # what this module rejects — two copies of these numbers is how a repair pass ends up
 # "fixing" a label to a length the validator still refuses.
+#
+# `description` is <Timeline>'s alone, and it is capped for LAYOUT rather than overflow:
+# it wraps to three lines before anything clips, so a two-clause description is perfectly
+# legal and still produces exactly what the cap exists to prevent — a milestone list so
+# dense the reader cannot tell which description belongs to which milestone. Two lines is
+# the shape that reads, and 110 chars is two lines at the timeline's measure.
+#
+# Timeline `date` is deliberately NOT here. It is capped in the prompt but not enforced,
+# because the generator already absorbs a long one losslessly (it falls back from the
+# right-aligned gutter to an eyebrow above the label), whereas shortening it destroys the
+# meaning: "Discovery phase (week 1)" truncates to "Discovery", which is not a date at
+# all. An untidy-but-correct marker beats a tidy wrong one.
 DIAGRAM_TEXT_LIMITS: tuple[tuple[str, int, str], ...] = (
     ("label", 22, "step/node/column label"),
     ("title", 22, "node/column title"),
     ("sub", 44, "sub-label"),
     ("outcome", 62, "decision outcome"),
+    ("description", 110, "timeline milestone description"),
 )
 
 
