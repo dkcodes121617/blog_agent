@@ -611,6 +611,13 @@ HARD MDX RULES:
     milestones (never more than 6), 3-5 flow steps, 3-4 bullets per compare column.
     One idea per row. Two milestones that make the same point should be one milestone,
     and a description carrying two contrasting clauses belongs in the prose instead.
+  - YOUR ILLUSTRATION DATA BECOMES THE POST'S COVER IMAGE. The site builds each post's
+    16:9 cover from one of the components you write here - the bars of your BarChart,
+    the columns of your CompareDiagram, the milestones of your Timeline - and writes
+    the image's alt text from those same numbers. So: use REAL, specific figures and
+    keep the first label of every data series short and concrete ("Managed Postgres",
+    not "Self-hosted PostgreSQL on a dedicated instance"). A vague or empty chart makes
+    a vague cover, and the cover is what shows up in image search and on the blog index.
   - Never write a raw '<' or '{{' in ordinary prose. Write "under 200 ms", not the
     symbol version; write "the data", not "the {{data}}".
   - Only use these components: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
@@ -636,6 +643,8 @@ _MDX_RULES = """HARD MDX RULES:
   - Keep diagrams SPARSE - a diagram is a glance, not a second article. 4-5 Timeline
     milestones (never more than 6), 3-5 flow steps, 3-4 bullets per compare column,
     one idea per row.
+  - Your illustration data also becomes the post's COVER IMAGE and its alt text, so use
+    real, specific figures and keep data labels short and concrete.
   - No markdown tables. Never write a raw '<' or '{' in ordinary prose (write
     "under 200 ms", not the symbol; "the data", not "the {data}").
   - Only these components exist: KeyTakeaways, Callout, FlowDiagram, CompareDiagram,
