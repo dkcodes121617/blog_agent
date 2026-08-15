@@ -78,8 +78,119 @@ def ensure_repo() -> Repo:
     return repo
 
 
+# ─── SERP length budgets ───
+#
+# The site's layout appends " | WizCodes" (11 chars) to every title via the root
+# metadata template, so the BARE title has 49 characters before the brand suffix
+# starts getting cut. Google truncates around 575-600px, which is roughly 55-60
+# characters at average letter widths; past that it drops the brand and then real
+# words, and past ~65 it often rewrites the title from page content instead —
+# which throws away the keyword placement the outliner worked for.
+#
+# The prompts already ask for "~50-60 chars" (library.py) and "140-160 chars",
+# but nothing enforced it, so 11 of 17 published titles ran 62-84 characters and
+# 24 pages shipped descriptions over 165. Asking is not enforcing.
+#
+# Trimming here rather than rejecting: the post is written, validated and about to
+# ship, and a hard failure at this point costs the whole run. A tidy trim at a word
+# boundary is strictly better than a mid-word ellipsis added by Google.
+TITLE_BUDGET = 52
+DESC_BUDGET = 158
+# Below this a shortened title has lost so much that the original, truncated by
+# Google, is the better outcome. A headline is not salvageable by machine.
+TITLE_FLOOR = 24
+# Separators a writer uses to append a secondary clause. Cutting here keeps the
+# leading clause, which is where the outliner is told to put the primary keyword.
+_TITLE_CUTS = (" (", ": ", " — ", " – ", " - ", " | ")
+_SENTENCE_END = (".", "!", "?")
+
+
+def _fit_title(title: str, slug: str) -> str:
+    """Shorten a title ONLY at a natural clause boundary — never mid-thought.
+
+    Word-boundary trimming was tried and rejected: it turned "What custom software
+    actually costs in 2026 (and why AI changed the math)" into "What custom software
+    actually costs in 2026 (and", which is worse than anything Google would do to it.
+    A fragment in the SERP costs more than a truncation, so when no clean cut exists
+    this returns the original and logs instead.
+    """
+    title = (title or "").strip()
+    if len(title) <= TITLE_BUDGET:
+        return title
+
+    # Longest clean cut that fits — keeps as much of the headline as possible.
+    best = ""
+    for sep in _TITLE_CUTS:
+        idx = title.find(sep)
+        while idx != -1:
+            head = title[:idx].strip().rstrip(",;:-–—(")
+            if TITLE_FLOOR <= len(head) <= TITLE_BUDGET and len(head) > len(best):
+                best = head
+            idx = title.find(sep, idx + 1)
+
+    if best:
+        log.warning(
+            "%s: title %d chars -> %d, cut at a clause boundary. Was: %r",
+            slug, len(title), len(best), title,
+        )
+        return best
+
+    log.error(
+        "%s: title is %d chars (budget %d) and has no clean cut point, so it ships "
+        "as written and Google will truncate it. Fix the length instruction in "
+        "prompts/library.py — it does not account for the ' | WizCodes' suffix the "
+        "site's metadata template appends. Title: %r",
+        slug, len(title), TITLE_BUDGET, title,
+    )
+    return title
+
+
+def _fit_description(desc: str, slug: str) -> str:
+    """Trim a description to the budget, preferring a sentence boundary."""
+    desc = (desc or "").strip()
+    if len(desc) <= DESC_BUDGET:
+        return desc
+
+    # Prose survives a clean cut, unlike a headline: prefer the last full sentence.
+    window = desc[:DESC_BUDGET]
+    cut = max(window.rfind(c) for c in _SENTENCE_END)
+    if cut >= 80:
+        out = window[: cut + 1].strip()
+    else:
+        words, out = window.split(), ""
+        for w in words:
+            candidate = f"{out} {w}".strip()
+            if len(candidate) > DESC_BUDGET - 1:
+                break
+            out = candidate
+        out = out.rstrip(" ,;:-–—(")
+        for tail in (" and", " or", " with", " for", " the", " a", " to", " in", " of"):
+            if out.endswith(tail):
+                out = out[: -len(tail)].rstrip(" ,;:-")
+        if out and not out.endswith(_SENTENCE_END):
+            out += "."
+
+    log.warning("%s: description %d chars -> %d. Was: %r", slug, len(desc), len(out), desc)
+    return out
+
+
+def _fit_metadata(state: dict) -> None:
+    """Clamp title/description to their SERP budgets, in place.
+
+    The prompts already ASK for these lengths (prompts/library.py) and nothing
+    enforced it, so 11 of 17 published titles ran 62-84 characters including the
+    brand suffix and 24 pages shipped descriptions over 165. Asking is not
+    enforcing, and a truncated SERP entry costs every impression for the life of
+    the post.
+    """
+    slug = state.get("slug", "?")
+    state["title"] = _fit_title(state.get("title", ""), slug)
+    state["description"] = _fit_description(state.get("description", ""), slug)
+
+
 def _render_registry_entry(state: dict, iso_date: str) -> str:
     """Build the TypeScript object literal for posts.ts (matches the file's style)."""
+    _fit_metadata(state)
     tags = ", ".join(f"'{_esc(t)}'" for t in state["tags"])
     # Record the shape this post was written as, so the NEXT run's rotation reads a
     # fact instead of re-deriving it from the title with a regex. Omitted entirely

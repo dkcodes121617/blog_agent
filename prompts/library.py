@@ -517,7 +517,7 @@ maintenance cost breakdown" earns search traffic, "Chart 1" earns none.
 
 Produce a JSON plan:
 {{
-  "working_title": string (natural, ~50-60 chars, includes the primary keyword, sounds like a business article — no "how to build X"),
+  "working_title": string (AT MOST 52 characters — the site appends " | WizCodes" (11 more) so anything longer is truncated in Google. Natural, leads with the primary keyword, sounds like a business article — no "how to build X"),
   "h2s": [4-5 strings adapted from the archetype pattern above, keyword-rich but natural and buyer-facing — four is the minimum a post can ship with],
   "lsi_keywords": [5-8 semantic variants to weave in naturally — business terms, not technical jargon],
   "internal_links": [3-4 objects {{"path": "/services/... or /work/... or /blog/... or /contact", "anchor": string}}],
@@ -955,8 +955,8 @@ Two hard rules, because a headline that overpromises loses more than it gains:
 Produce the registry metadata as JSON:
 {{
   "slug": string (kebab-case, contains the primary keyword, unique vs the taken list),
-  "title": string (55-65 chars, includes the primary keyword, written for a business reader),
-  "description": string (140-160 chars, includes the keyword and a concrete business benefit),
+  "title": string (HARD LIMIT 52 characters. The site's metadata template appends " | WizCodes" — 11 more — and Google truncates the result around 60. Lead with the primary keyword; put any secondary clause after a colon so it can be dropped without breaking the headline),
+  "description": string (AT MOST 155 characters, includes the keyword and a concrete business benefit. Google cuts at ~158 on desktop and ~120 on mobile, so front-load the value),
   "tags": [2-4 Title Case tags]
 }}"""
     return system, user
