@@ -45,7 +45,7 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Config:
     # ── Proxy / LLM ──
-    anthropic_base_url: str = os.getenv("ANTHROPIC_BASE_URL", "https://api3.claudestore.store")
+    anthropic_base_url: str = os.getenv("ANTHROPIC_BASE_URL", "https://api.llmsrelay.com")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4.6")
     small_model: str = os.getenv("ANTHROPIC_SMALL_FAST_MODEL", "claude-haiku-4.5")

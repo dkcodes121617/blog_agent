@@ -1,4 +1,4 @@
-"""Client for the Claude-compatible proxy (ClaudeStore).
+"""Client for the Claude-compatible proxy (LLMsRelay; ClaudeStore until 2026-08-16).
 
 Speaks the Anthropic Messages API shape directly over HTTP. Two hard-won details
 from testing the endpoint (see agent README / memory):

@@ -1,6 +1,6 @@
 """Prompt builders for every LLM node.
 
-Design rules learned from testing the ClaudeStore proxy:
+Design rules learned from testing the proxy (ClaudeStore, now LLMsRelay):
   - Phrase everything as a normal professional content task. NEVER use
     override/compliance language ("reply with exactly", "never break character",
     "obey this contract") — the proxy's injection guard refuses those.

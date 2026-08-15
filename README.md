@@ -6,7 +6,7 @@ times**, each one **unique** (checked against a knowledge base of every existing
 post), grounded in the studio's **real facts** (no hallucinated numbers/clients),
 and shipped straight into the site's private GitHub repo.
 
-Only recurring cost: the **ClaudeStore proxy API key**. Everything else (Render
+Only recurring cost: the **LLMsRelay proxy API key**. Everything else (Render
 cron, GitHub Actions, Firebase Hosting, local embeddings) is free.
 
 ---
@@ -17,7 +17,7 @@ cron, GitHub Actions, Firebase Hosting, local embeddings) is free.
 GitHub Actions cron (hourly, free on the public agent repo)
         │  "is a post due now?" (date-seeded plan vs. posts already published today)
         ▼
-LangGraph pipeline (Sonnet 4.6 via ClaudeStore proxy)
+LangGraph pipeline (Sonnet 4.6 via LLMsRelay proxy)
   load facts → pick topic → [uniqueness gate] → outline → write
     → fact-check → [MDX validate] → humanize → registry
     → [final uniqueness] → publish
@@ -104,7 +104,7 @@ because Render cron jobs are not free.
 - The workflow is `.github/workflows/publish.yml` (hourly + a manual "Run workflow"
   button). It's stateless — no server, no saved files.
 - In this repo → **Settings → Secrets and variables → Actions**, add two secrets:
-  - `ANTHROPIC_API_KEY` — your ClaudeStore key.
+  - `ANTHROPIC_API_KEY` — your LLMsRelay key.
   - `PUBLISH_TOKEN` — the fine-grained PAT from step 1 (Actions reserves the name
     `GITHUB_TOKEN`, so the secret is `PUBLISH_TOKEN`; the workflow maps it to the
     `GITHUB_TOKEN` env var the app reads).
