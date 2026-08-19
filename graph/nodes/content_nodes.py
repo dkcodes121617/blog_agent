@@ -32,6 +32,7 @@ from seo.mdx_repair import (
     repair_deterministic,
     section_heading_before,
 )
+from seo import content_policy
 from seo.mdx_validator import (
     MIN_H2_SECTIONS,
     overlong_diagram_text,
@@ -95,10 +96,17 @@ class Nodes:
         }
 
     # ── topic ──
+    # Phrases, not bare words. The list used to include "code", "library" and
+    # "framework" as substrings checked against keyword + angle — so an angle
+    # containing "a practical framework for choosing" was rejected as a developer
+    # tutorial and burned a topic attempt on a topic that was exactly right. The
+    # signals that actually identify a tutorial are all multi-word.
     _DEVELOPER_SIGNALS = (
         "how to build", "how to create", "how to implement", "how to set up",
+        "how to install", "how to configure", "how to deploy", "how to code",
         "step-by-step", "tutorial", "implementation guide", "developer guide",
-        "code", "library", "framework", "sdk", "api integration", "github",
+        "code example", "code walkthrough", "sample code", "boilerplate",
+        "sdk guide", "api integration guide", "getting started with",
     )
 
     def pick_topic(self, state: BlogState) -> dict:
@@ -129,7 +137,7 @@ class Nodes:
         keyword = data.get("primary_keyword", "").strip()
         angle = data.get("angle", "").strip()
         intent_type = data.get("intent_type", "commercial").strip().lower()
-        archetype = data.get("archetype", "decision_framework").strip().lower()
+        archetype = data.get("archetype", P.DEFAULT_ARCHETYPE).strip().lower()
 
         # Guard: reject developer-facing topics by scanning keyword + angle for
         # implementation signals.
@@ -148,14 +156,21 @@ class Nodes:
         is_dev_facing = any(sig in combined_lower for sig in self._DEVELOPER_SIGNALS)
         # Belt and braces: the blocked archetypes are already absent from the menu, but
         # the model can still name one. Treat that as a rejection rather than letting a
-        # fifth cost breakdown through on a technicality.
+        # fifth post of one shape through on a technicality.
         uses_blocked = archetype in blocked
+
+        # The editorial standard, enforced at the cheapest possible point. The topic
+        # prompt states it plainly and the strategist still proposes a price or duration
+        # angle sometimes — the same way it kept proposing cost breakdowns when merely
+        # asked not to. Rejecting here costs one small call; catching it in the body
+        # costs a whole article and a fix loop that has to unpick the premise.
+        policy_hits = content_policy.topic_violations(keyword, angle, data.get("rationale", ""))
 
         result = {
             "primary_keyword": keyword,
             "angle": angle,
             "audience": data.get("audience", "").strip(),
-            "archetype": archetype,
+            "archetype": P.normalise_archetype(archetype),
             "intent_type": intent_type,
             "rationale": data.get("rationale", "").strip(),
             "topic_attempts": attempts,
@@ -163,8 +178,13 @@ class Nodes:
             "focus_brief": focus["brief"] if focus else "",
         }
 
-        if is_dev_facing or uses_blocked:
-            reason = "developer-facing" if is_dev_facing else f"blocked archetype '{archetype}'"
+        if is_dev_facing or uses_blocked or policy_hits:
+            if policy_hits:
+                reason = f"editorial policy ({content_policy.describe(policy_hits, limit=3)})"
+            elif is_dev_facing:
+                reason = "developer-facing"
+            else:
+                reason = f"blocked archetype '{archetype}'"
             log.info(
                 "  pick_topic: rejected topic %r (%s) — re-picking", keyword, reason,
             )
@@ -186,7 +206,7 @@ class Nodes:
         log.info("node: outline for %r (archetype=%s)", state["primary_keyword"], state.get("archetype", "?"))
         system, user = P.outline_prompt(
             self.facts_block, state["primary_keyword"], state["angle"],
-            state.get("audience", ""), state.get("archetype", "decision_framework"),
+            state.get("audience", ""), state.get("archetype", P.DEFAULT_ARCHETYPE),
             state.get("related_slugs", []),
         )
         data = self.llm.complete_json(system=system, user=user, max_tokens=1100,
@@ -392,6 +412,35 @@ class Nodes:
         for note in notes:
             log.info("  repair: %s", note)
 
+        # Editorial-standard figures are the one repairable class the deterministic pass
+        # cannot touch: removing "$45,000" from a sentence means rewriting the sentence,
+        # and a regex that deleted the number would leave "the rebuild came in at ."
+        #
+        # fix_claims_prompt is the right tool and already exists — it removes or rewords
+        # flagged sentences and changes nothing else, which is exactly the edit needed.
+        # Reusing it keeps one surgical editor in the codebase instead of two.
+        policy_hits = content_policy.body_violations(candidate)
+        if policy_hits:
+            issues = [
+                f"{v.why} {v.text!r} — this blog publishes no prices and no delivery "
+                f"durations; make the point qualitatively or drop the sentence"
+                for v in policy_hits[:6]
+            ]
+            log.info("  repair: %d editorial-policy figure(s) to remove", len(policy_hits))
+            try:
+                system, user = P.fix_claims_prompt(candidate, issues)
+                cleaned = sanitize_prose(
+                    self.llm.complete(system=system, user=user, max_tokens=4000))
+                # Only accept an edit that actually reduced the violations. A model that
+                # paraphrases around a figure without removing it would otherwise be
+                # allowed to burn the whole repair budget making no progress.
+                if len(cleaned) > 400 and len(content_policy.body_violations(cleaned)) < len(policy_hits):
+                    candidate = cleaned
+                else:
+                    log.info("  repair: policy pass made no progress — keeping prior text")
+            except (LLMError, LLMTransient) as e:
+                log.warning("  repair: policy pass failed (%s)", str(e)[:120])
+
         report = validate_mdx(candidate, known_slugs=set(state.get("known_slugs", [])))
         if len(report.errors) >= before:
             log.info("  repair: no improvement (%d -> %d error(s)) — keeping the prior draft",
@@ -509,11 +558,28 @@ class Nodes:
         # Guarantee uniqueness against the registry.
         if slug in state.get("known_slugs", []):
             slug = _dedupe_slug(slug, state.get("known_slugs", []))
+
+        title = data.get("title", "").strip()
+        description = data.get("description", "").strip()
+        tags = data.get("tags", [])[:4]
+
+        # The metadata gets its own policy check because it is written LAST, by a
+        # separate call that only sees the body — so a clean article can still be given
+        # a headline about price. The title, the description and the slug are the three
+        # strings that decide what the post ranks for, which makes this the one place a
+        # violation does the most damage.
+        meta_hits = content_policy.topic_violations(title, description, " ".join(tags), slug)
+        if meta_hits:
+            log.warning(
+                "  build_registry: metadata violates the editorial standard (%s)",
+                content_policy.describe(meta_hits, limit=4))
+
         return {
             "slug": slug,
-            "title": data.get("title", "").strip(),
-            "description": data.get("description", "").strip(),
-            "tags": data.get("tags", [])[:4],
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "metadata_policy_hits": [str(v) for v in meta_hits],
             "reading_minutes": reading_minutes(state["body_mdx"]),
             "cover_motif": self._pick_cover_motif(slug),
         }

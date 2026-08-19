@@ -19,7 +19,7 @@ class BlogState(TypedDict, total=False):
     angle: str                  # the specific take/thesis
     audience: str
     rationale: str              # why this topic ranks / is valuable
-    archetype: str              # cost_breakdown | vs_comparison | decision_framework | mistake_guide
+    archetype: str              # one of prompts.library.ARCHETYPES
     intent_type: str            # commercial | informational | navigational
     focus_brief: str            # the assigned topic focus for this run
     topic_rejected: bool        # pick_topic flagged this topic as developer-facing
@@ -47,6 +47,9 @@ class BlogState(TypedDict, total=False):
     reading_minutes: int
     cover_motif: str            # which cover artwork the site draws for this post
     date: str                   # ISO YYYY-MM-DD assigned at publish
+    # Editorial-standard violations found in the title/description/slug. Non-empty
+    # aborts the run before publishing — see route_after_final_uniqueness.
+    metadata_policy_hits: list[str]
 
     # ── validation ──
     validation_errors: list[str]

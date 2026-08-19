@@ -73,6 +73,15 @@ def route_after_factcheck(state: BlogState) -> str:
 def route_after_final_uniqueness(state: BlogState) -> str:
     if state["body_similarity"] >= CONFIG.body_sim_threshold:
         return "abort"
+    # The last gate before publication. The body has already been checked by the
+    # validator and cleaned by fix_claims; this catches the case where the metadata
+    # call — which runs after all of that and sees only the body — hands back a title,
+    # description or slug about price or duration. Publishing nothing is the right
+    # outcome: the title and slug are what the post ranks for, so a cost headline over a
+    # clean article still recruits exactly the reader the standard exists to avoid, and
+    # the next hourly run simply writes a different post.
+    if state.get("metadata_policy_hits"):
+        return "abort_policy"
     return "ok"
 
 
@@ -104,6 +113,9 @@ def build_graph(nodes: Nodes):
         "post or developer-facing"))
     g.add_node("abort_validate", _abort("could not produce contract-valid MDX within revision budget"))
     g.add_node("abort_dup", _abort("finished draft too similar to an existing post"))
+    g.add_node("abort_policy", _abort(
+        "metadata breaks the editorial standard — the title, description or slug is "
+        "about price or delivery time"))
 
     g.add_edge(START, "load_context")
     g.add_edge("load_context", "pick_topic")
@@ -134,10 +146,10 @@ def build_graph(nodes: Nodes):
     g.add_edge("registry", "final_uniqueness")
     g.add_conditional_edges(
         "final_uniqueness", route_after_final_uniqueness,
-        {"ok": "finalize", "abort": "abort_dup"},
+        {"ok": "finalize", "abort": "abort_dup", "abort_policy": "abort_policy"},
     )
     g.add_edge("finalize", END)
-    for a in ("abort_topic", "abort_validate", "abort_dup"):
+    for a in ("abort_topic", "abort_validate", "abort_dup", "abort_policy"):
         g.add_edge(a, END)
 
     return g.compile()

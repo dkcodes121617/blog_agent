@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 
 from seo.mdx_validator import (
+    COMPONENT_ITEM_KEYS,
+    COMPONENT_PROPS,
     DIAGRAM_TEXT_LIMITS,
     diagram_text_pattern,
     overlong_diagram_text,
@@ -258,6 +260,55 @@ def repair_deterministic(text: str) -> tuple[str, list[str]]:
         text = insert_captions(text, missing)
         notes += [f"added a caption to <{comp}>" for comp, _ in missing]
 
+    text, renamed = rename_component_props(text)
+    notes += renamed
+
+    return text, notes
+
+
+def rename_component_props(text: str) -> tuple[str, list[str]]:
+    """Rename invented component props onto the ones the site actually reads.
+
+    A wrong prop name is the single cheapest error in the pipeline to fix and was the
+    most expensive to ignore: `<StatGrid data={…}>` renders nothing, and before the site
+    grew guards it crashed the static export and blocked every deploy for three days.
+
+    It is fixed HERE, mechanically, rather than by asking the model to rewrite the post.
+    The edit is a rename — `data=` to `stats=`, `title:` to `label:` — with no judgement
+    in it, so spending a model call on it would be slower, cost a retry budget, and
+    risk the rewrite changing something else in passing.
+
+    Only renames a prop the component does NOT already have. A component carrying both
+    `stats=` and `data=` is a different problem, and blindly renaming would produce two
+    `stats=` props and invalid MDX.
+    """
+    notes: list[str] = []
+
+    for name, spec in COMPONENT_PROPS.items():
+        required = spec["required"]
+        for alias in spec["aliases"]:
+            def _sub(m: "re.Match[str]") -> str:
+                attrs = m.group(2)
+                if re.search(rf"\b{required}\s*=", attrs):
+                    return m.group(0)
+                if not re.search(rf"\b{alias}\s*=", attrs):
+                    return m.group(0)
+                notes.append(f"<{name}>: renamed `{alias}=` to `{required}=`")
+                return m.group(1) + re.sub(rf"\b{alias}(\s*=)", rf"{required}\1", attrs, count=1) + m.group(3)
+
+            text = re.sub(rf"(<{name}\b)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/?>)", _sub, text, flags=re.S)
+
+    for name, (key, wrong_keys) in COMPONENT_ITEM_KEYS.items():
+        for wrong in wrong_keys:
+            def _sub_item(m: "re.Match[str]") -> str:
+                block = m.group(2)
+                if re.search(rf"\b{key}\s*:", block) or not re.search(rf"\b{wrong}\s*:", block):
+                    return m.group(0)
+                notes.append(f"<{name}> entries: renamed `{wrong}:` to `{key}:`")
+                return m.group(1) + re.sub(rf"\b{wrong}(\s*:)", rf"{key}\1", block) + m.group(3)
+
+            text = re.sub(rf"(<{name}\b)(.*?)(/>)", _sub_item, text, flags=re.S)
+
     return text, notes
 
 
@@ -266,6 +317,18 @@ def repairable(errors: list[str]) -> bool:
 
     Used by the router: routing a "needs 4-8 H2 sections" error to a string
     editor would spend a budget on something it structurally cannot fix.
+
+    Prop renames and editorial-policy figures are both listed because both are
+    string-level edits, and the alternative route is a full rewrite that this module's
+    header documents as non-convergent. A rewrite to remove one price regenerates every
+    section and every diagram, and the new draft reliably arrives with a different price
+    in a different place.
     """
-    marks = ("too long for its box", "has no caption")
+    marks = (
+        "too long for its box",
+        "has no caption",
+        "rename the prop",
+        "rename the key",
+        "editorial policy",
+    )
     return any(any(m in e for m in marks) for e in errors)

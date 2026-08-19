@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from seo import content_policy
+
 # The 13 components registered in src/mdx-components.tsx (the only allowed tags).
 ALLOWED_COMPONENTS = {
     "KeyTakeaways", "Callout", "FlowDiagram", "CompareDiagram",
@@ -57,6 +59,89 @@ VISUAL_COMPONENTS = (
     "FlowDiagram", "CompareDiagram", "BarChart", "Figure",
     "StatGrid", "Timeline", "DecisionTree", "ConceptDiagram", "QuadrantMap",
 )
+
+# ── Component prop contracts ────────────────────────────────────────────────
+# The DATA prop each component reads, and the prop names the writer has actually
+# invented in its place. Three published posts carry a component the site cannot draw:
+#
+#   <StatGrid data={…}>        — the component reads `stats`
+#   <Timeline milestones={…}>  — the component reads `events`
+#   <CompareDiagram>           — with a column missing its `points`
+#
+# Nothing caught them. The exporter logged "skipped (Cannot read properties of
+# undefined)" — a warning in a build log nobody reads — while the React component had
+# no guard at all and crashed the static export, taking the whole site's deploy down
+# with it. The site has since grown guards, but a guarded component still renders
+# NOTHING, so the post ships an illustration short and its cover falls back to abstract
+# art. The real fix is to never publish it, which is this table.
+#
+# `required` is the prop that carries the data; `aliases` are the wrong names seen or
+# plausibly next, mapped so the error message can say what to write instead.
+COMPONENT_PROPS: dict[str, dict] = {
+    "BarChart":       {"required": "data",      "aliases": ("bars", "values", "items", "series")},
+    "StatGrid":       {"required": "stats",     "aliases": ("data", "items", "figures", "metrics")},
+    "CompareDiagram": {"required": "columns",   "aliases": ("options", "sides", "items", "data")},
+    "Timeline":       {"required": "events",    "aliases": ("milestones", "items", "steps", "phases")},
+    "FlowDiagram":    {"required": "steps",     "aliases": ("stages", "items", "nodes", "phases")},
+    "ConceptDiagram": {"required": "nodes",     "aliases": ("items", "concepts", "parts", "steps")},
+    "QuadrantMap":    {"required": "quadrants", "aliases": ("cells", "items", "grid")},
+    "DecisionTree":   {"required": "yes",       "aliases": ("branches", "options")},
+    "KeyTakeaways":   {"required": "points",    "aliases": ("items", "takeaways", "bullets")},
+    "FAQ":            {"required": "items",     "aliases": ("questions", "faqs", "qa")},
+}
+
+# Item-level shapes: a component whose container prop is right but whose entries carry
+# the wrong keys fails exactly the same way. `<Timeline events={[{date, title}]}>`
+# renders a row with no label, because the component reads `label`.
+COMPONENT_ITEM_KEYS: dict[str, tuple[str, tuple[str, ...]]] = {
+    # component -> (required key on each entry, wrong keys seen instead)
+    "Timeline":       ("label", ("title", "name", "heading")),
+    "FlowDiagram":    ("label", ("title", "name", "step")),
+    "ConceptDiagram": ("title", ("label", "name")),
+    "CompareDiagram": ("title", ("label", "name", "heading")),
+    "StatGrid":       ("value", ("figure", "number", "amount")),
+}
+
+_OPEN_TAG = re.compile(r"<(" + "|".join(COMPONENT_PROPS) + r")\b((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)/?>", re.S)
+
+
+def component_prop_errors(mdx: str) -> list[str]:
+    """Components whose props the site cannot read.
+
+    Checked BEFORE publishing rather than after, because every downstream layer can
+    only degrade: the exporter skips the graphic, the component renders nothing, and
+    the cover silently falls back to abstract art. All three are invisible until
+    somebody looks at the live page.
+    """
+    errors: list[str] = []
+    for m in _OPEN_TAG.finditer(mdx or ""):
+        name, attrs = m.group(1), m.group(2)
+        spec = COMPONENT_PROPS[name]
+        required = spec["required"]
+        if re.search(rf"\b{required}\s*=", attrs):
+            continue
+        wrong = next((a for a in spec["aliases"] if re.search(rf"\b{a}\s*=", attrs)), None)
+        if wrong:
+            errors.append(
+                f"<{name}> uses `{wrong}=` but the component reads `{required}=` — "
+                f"rename the prop (the graphic does not render otherwise)")
+        else:
+            errors.append(
+                f"<{name}> is missing its `{required}=` prop — the component has no data to draw")
+
+    for name, (key, wrong_keys) in COMPONENT_ITEM_KEYS.items():
+        for m in re.finditer(rf"<{name}\b(.*?)/>", mdx or "", re.S):
+            block = m.group(1)
+            if not re.search(r"\{\s*\w+\s*:", block):
+                continue
+            if re.search(rf"\b{key}\s*:", block):
+                continue
+            bad = next((w for w in wrong_keys if re.search(rf"\b{w}\s*:", block)), None)
+            if bad:
+                errors.append(
+                    f"<{name}> entries use `{bad}:` but the component reads `{key}:` — "
+                    f"rename the key on every entry")
+    return errors
 
 # ── Diagram text limits ──
 # (prop, max chars, human name). Shared with seo.mdx_repair, which shortens exactly
@@ -363,6 +448,23 @@ def validate_mdx(mdx: str, known_slugs: set[str] | None = None) -> ValidationRep
                 f"blog link {l} points to a slug not in the registry — link an existing "
                 f"post or drop the link"
             )
+
+    # ── Component prop contracts ──
+    # An error, not a warning: a component the site cannot draw is a hole in the post
+    # AND a cover that falls back to abstract art, and the repair loop can fix it from
+    # the message alone.
+    r.errors.extend(component_prop_errors(text))
+
+    # ── Editorial policy: no prices, no delivery durations ──
+    # Figures are errors because they are the thing that must never ship. Framing in a
+    # heading is a warning here — by the time a body exists the subject was settled at
+    # topic-selection time, and failing the whole draft for a heading the writer chose
+    # would loop without converging. content_policy.topic_violations() is what stops a
+    # cost post being commissioned in the first place.
+    for v in content_policy.body_violations(text):
+        r.errors.append(f"editorial policy — remove the {v.why} {v.text!r} (no prices or durations)")
+    for v in content_policy.heading_violations(text):
+        r.warnings.append(f"editorial policy — heading uses {v.why} ({v.text!r})")
 
     # ── Lead paragraph (first non-empty block is prose, not a component/heading) ──
     first_block = text.split("\n\n", 1)[0].strip()
