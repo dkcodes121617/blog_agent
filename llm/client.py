@@ -50,6 +50,14 @@ class LLMTransient(RuntimeError):
     """A retryable problem (timeout, 5xx, rate limit, WAF hiccup)."""
 
 
+class LLMTruncated(LLMError):
+    """The reply hit `max_tokens` and was cut off mid-sentence or mid-JSON.
+
+    Distinct from LLMError so `complete_json` can retry with a bigger budget
+    rather than re-asking the same question and getting the same cut reply.
+    """
+
+
 class LLMClient:
     def __init__(self, model: str | None = None):
         self.base_url = CONFIG.anthropic_base_url.rstrip("/")
@@ -106,8 +114,14 @@ class LLMClient:
         max_tokens: int = 4096,
         temperature: float | None = None,
         model: str | None = None,
+        strict_length: bool = False,
     ) -> str:
-        """Return the assistant's text for a single-turn system+user prompt."""
+        """Return the assistant's text for a single-turn system+user prompt.
+
+        `strict_length` turns a cut-off reply into an error instead of returning
+        the fragment. Off by default because prose callers use `max_tokens` as a
+        deliberate length cap; on for anything that must parse.
+        """
         # The facts block is ~17k chars and is resent on every call in a run (intro +
         # one per H2 + closing + factcheck + humanize = 9+ calls). Prompt caching is
         # supported by this proxy (probed: cache_read confirmed), so the system prompt
@@ -140,12 +154,33 @@ class LLMClient:
             if block.get("type") == "text"
         )
         usage = data.get("usage", {})
+        stop_reason = data.get("stop_reason")
         log.info(
             "llm.complete %.1fs model=%s in=%s out=%s cache_r=%s stop=%s",
             dt, data.get("model"), usage.get("input_tokens"),
             usage.get("output_tokens"), usage.get("cache_read_input_tokens"),
-            data.get("stop_reason"),
+            stop_reason,
         )
+        # `stop_reason == "max_tokens"` means the reply was CUT OFF, not finished.
+        # It was logged and then ignored, which produced two different wrong
+        # diagnoses depending on where the cut landed:
+        #
+        #   * cut mid-JSON  -> _extract_json fails -> complete_json retries at the
+        #                      SAME cap, so it fails again, three times, and
+        #                      reports "could not obtain valid JSON"
+        #   * cut before any text block -> `text` is empty -> "empty completion",
+        #                      which is the opposite of what happened: the model
+        #                      produced too much, not nothing
+        #
+        # Three of the last forty blog runs died this way, all reported as
+        # "aborted on LLM/proxy error: empty completion". Callers that want a
+        # length cap on prose still get one; only callers that need a COMPLETE
+        # reply (any JSON call) opt into strictness.
+        if strict_length and stop_reason == "max_tokens":
+            raise LLMTruncated(
+                f"reply hit the {max_tokens}-token cap and was cut off "
+                f"({usage.get('output_tokens')} tokens produced)"
+            )
         if not text.strip():
             raise LLMTransient("empty completion")
         return clean_text(text)
@@ -170,8 +205,25 @@ class LLMClient:
             "brace or bracket and stop at the closing one."
         )
         last_err: Exception | None = None
+        budget = max_tokens
         for i in range(attempts):
-            raw = self.complete(system=sys, user=user, max_tokens=max_tokens, model=model)
+            try:
+                raw = self.complete(
+                    system=sys, user=user, max_tokens=budget, model=model,
+                    strict_length=True,
+                )
+            except LLMTruncated as e:
+                # Asking the same question again with the same budget gets the
+                # same cut reply — that is exactly the loop that burned three
+                # attempts and aborted the run. Give it room instead. Doubling is
+                # bounded by `attempts`, so the worst case is one call at 4x.
+                last_err = e
+                budget *= 2
+                log.warning(
+                    "complete_json truncated at %d tokens; retrying at %d (%d/%d)",
+                    budget // 2, budget, i + 1, attempts,
+                )
+                continue
             parsed = _extract_json(raw)
             if parsed is not None:
                 return parsed

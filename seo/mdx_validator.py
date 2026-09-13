@@ -159,9 +159,23 @@ def component_prop_errors(mdx: str) -> list[str]:
 # right-aligned gutter to an eyebrow above the label), whereas shortening it destroys the
 # meaning: "Discovery phase (week 1)" truncates to "Discovery", which is not a date at
 # all. An untidy-but-correct marker beats a tidy wrong one.
+#
+# `label` and `title` were 22 until 13 Sep 2026, and 22 was measurably wrong. The
+# site's fitcheck measures RENDERED WIDTH, not characters, so the real boundary
+# moves with the glyphs: "Custom pricing logic" (20) and "Sales requests field"
+# (20) both clipped, and so did "AI evaluates timing" (19) in a narrower shape,
+# while every 18-character label observed fit. A char cap can only ever be a
+# proxy for that, so it is set to the widest length never seen to clip.
+#
+# This is not a cosmetic limit. A clipped label fails the site's prebuild gate,
+# the gate is cumulative, and the offending file stays in the repo — so one
+# overlong label blocked every deploy of the whole site for 24 days and took
+# seven finished posts offline with it. The real fix is for the generator to
+# shrink or wrap rather than clip; until it does, this cap is what stands
+# between an unlucky label and another outage.
 DIAGRAM_TEXT_LIMITS: tuple[tuple[str, int, str], ...] = (
-    ("label", 22, "step/node/column label"),
-    ("title", 22, "node/column title"),
+    ("label", 18, "step/node/column label"),
+    ("title", 18, "node/column title"),
     ("sub", 44, "sub-label"),
     ("outcome", 62, "decision outcome"),
     ("description", 110, "timeline milestone description"),
