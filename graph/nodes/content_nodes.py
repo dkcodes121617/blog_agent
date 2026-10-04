@@ -43,7 +43,10 @@ from seo.mdx_validator import (
 
 log = logging.getLogger("agent.nodes")
 
-MAX_TOPIC_ATTEMPTS = 4
+# Six, not four: an attempt is one small strategist call, and an abort costs the
+# whole slot. Four ran out on 2-4 Oct while the model kept re-proposing topics it
+# had already been refused, which the rejected-topics memory below now prevents.
+MAX_TOPIC_ATTEMPTS = 6
 MAX_REVISIONS = 2          # full rewrites for MDX-contract errors (rare)
 # Surgical string-level repairs per draft. Cheap (one small JSON call), and unlike a
 # rewrite it strictly reduces the error count or is discarded — so the budget exists
@@ -116,6 +119,19 @@ class Nodes:
         # Include the just-rejected topic so the model doesn't re-propose it.
         if state.get("primary_keyword"):
             recent = recent + [state["primary_keyword"]]
+        # Every topic refused this run, with the reason. Only the LAST one used to
+        # survive (primary_keyword is overwritten each attempt), so on 4 Oct the
+        # model proposed "how to build a user dashboard for a technical product"
+        # twice in four attempts and the run aborted as "topic space exhausted".
+        rejected = list(state.get("rejected_topics") or [])
+        if attempts > 1 and state.get("primary_keyword"):
+            if state.get("topic_rejected"):
+                why = state.get("topic_reject_reason") or "rejected"
+            elif state.get("topic_similarity", 0.0) >= CONFIG.topic_sim_threshold:
+                why = f"too close to the existing post '{state.get('similar_slug') or ''}'"
+            else:
+                why = "rejected"
+            rejected.append(f"{state['primary_keyword']} ({why})")
         blocked = P.blocked_archetypes(self.recent_posts)
         if blocked:
             log.info("  pick_topic: archetypes blocked this run: %s", ", ".join(blocked))
@@ -124,13 +140,16 @@ class Nodes:
         # corpus, so the strategist chooses WITHIN a subject rather than re-deriving the
         # same highest-probability one ("how much does X cost") from an open prompt.
         # Seeded by date so a stateless runner is deterministic within a day but rotates
-        # across days.
+        # across days - and stepped by the attempt number, so a focus that yields no
+        # usable topic hands over to the next one instead of failing every attempt
+        # (and every run that day) the same way.
         focus = P.pick_focus(self.projects, self.recent_posts,
-                             rotation_seed=date.today().toordinal())
+                             rotation_seed=date.today().toordinal() + attempts - 1)
         if focus:
             log.info("  pick_topic: focus = %s (%d anchor project(s), coverage=%d)",
                      focus["brief"], focus["anchor_count"], focus["coverage"])
-        system, user = P.topic_prompt(self.facts_block, recent, blocked, focus)
+        system, user = P.topic_prompt(self.facts_block, recent, blocked, focus,
+                                      rejected_this_run=rejected)
         data = self.llm.complete_json(system=system, user=user, max_tokens=1000,
                                      model=CONFIG.strategy_model)
 
@@ -175,6 +194,8 @@ class Nodes:
             "rationale": data.get("rationale", "").strip(),
             "topic_attempts": attempts,
             "topic_rejected": False,
+            "topic_reject_reason": "",
+            "rejected_topics": rejected,
             "focus_brief": focus["brief"] if focus else "",
         }
 
@@ -191,6 +212,7 @@ class Nodes:
             # The keyword is still carried forward so it lands in the `recent` list on
             # the next attempt and won't simply be re-proposed.
             result["topic_rejected"] = True
+            result["topic_reject_reason"] = reason
 
         return result
 

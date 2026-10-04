@@ -492,6 +492,7 @@ def topic_prompt(
     avoid_recent: list[str],
     blocked: list[str] | None = None,
     focus: dict | None = None,
+    rejected_this_run: list[str] | None = None,
 ) -> tuple[str, str]:
     system = (
         "You are the content strategist for a custom software studio. Your job is to "
@@ -502,6 +503,16 @@ def topic_prompt(
         "that gets quoted, not the one that gets scrolled past."
     )
     avoid = "\n".join(f"  - {s}" for s in avoid_recent) or "  (none yet)"
+    # Topics refused earlier in THIS run, with why. Stating the reason is what stops
+    # a near-identical re-proposal ("user dashboard for a technical product" twice).
+    refused_block = ""
+    if rejected_this_run:
+        refused_block = (
+            "Already proposed and REFUSED in this run - do not propose these or close "
+            "variants of them, and avoid the reason each was refused:\n"
+            + "\n".join(f"  - {r}" for r in rejected_this_run)
+            + "\n\n"
+        )
 
     # Over-used archetypes are removed from the menu entirely rather than merely
     # discouraged — the model reliably picks whatever is listed, and a "please vary"
@@ -524,7 +535,7 @@ def topic_prompt(
 Recently covered topics to avoid repeating:
 {avoid}
 
-{focus_block}Propose ONE blog topic that helps someone understand or plan a piece of CUSTOM-BUILT
+{refused_block}{focus_block}Propose ONE blog topic that helps someone understand or plan a piece of CUSTOM-BUILT
 software. The reader owns the problem — a founder, an operations lead, a product owner,
 a technical decision-maker — and wants to understand the thing well enough to make a
 good call. They are not looking for a quote.

@@ -23,6 +23,8 @@ class BlogState(TypedDict, total=False):
     intent_type: str            # commercial | informational | navigational
     focus_brief: str            # the assigned topic focus for this run
     topic_rejected: bool        # pick_topic flagged this topic as developer-facing
+    topic_reject_reason: str    # why pick_topic rejected it (fed into the next attempt)
+    rejected_topics: list[str]  # every topic rejected this run, with its reason
 
     # ── uniqueness ──
     topic_similarity: float     # max cosine of topic vs KB
