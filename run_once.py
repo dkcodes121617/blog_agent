@@ -66,8 +66,23 @@ def run_once() -> dict:
     if CONFIG.dry_run:
         _write_dry_run(final)
     else:
+        from publish import site_gate
         from publish.github_publisher import publish_post
-        path = publish_post(final, kb)
+        try:
+            path = publish_post(final, kb)
+        except site_gate.SiteGateError as e:
+            # One targeted repair, then one retry. Only the flagged strings change.
+            log.warning("site graphics checks rejected the draft: %s", e)
+            repaired = site_gate.repair(final["body_mdx"], e.report, getattr(nodes, "llm", None))
+            if not repaired:
+                return {**final, "status": "aborted",
+                        "abort_reason": f"site graphics checks failed: {e}"}
+            final["body_mdx"] = repaired
+            try:
+                path = publish_post(final, kb)
+            except site_gate.SiteGateError as e2:
+                return {**final, "status": "aborted",
+                        "abort_reason": f"site graphics checks failed after repair: {e2}"}
         final["published_path"] = path
         final["status"] = "published"
 

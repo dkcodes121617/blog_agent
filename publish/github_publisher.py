@@ -268,6 +268,18 @@ def publish_post(state: dict, kb: KnowledgeBase | None = None) -> str:
         raise RuntimeError("registry insertion sanity check failed")
     registry_path.write_text(new_ts, encoding="utf-8")
 
+    # The site's own graphics checks, before anything is committed. A post that
+    # fails them fails the whole site build, and from 14 Oct to 24 Nov that kept
+    # every later post off the live site. See publish/site_gate.py.
+    from publish import site_gate
+    report = site_gate.run_checks(root, slug)
+    _restore_generated(repo)
+    if report.blocking:
+        # Leave the clone exactly as pulled, so a repaired retry starts clean.
+        mdx_path.unlink(missing_ok=True)
+        repo.git.checkout("--", CONFIG.posts_registry_rel)
+        raise site_gate.SiteGateError(report)
+
     # Commit + push. Committer identity comes from the repo-local config set in
     # ensure_repo(); author defaults to the same, so no --author flag is needed.
     repo.git.add(mdx_rel, CONFIG.posts_registry_rel)
@@ -289,6 +301,19 @@ def publish_post(state: dict, kb: KnowledgeBase | None = None) -> str:
 
     log.info("published %s", mdx_rel)
     return mdx_rel
+
+
+def _restore_generated(repo: Repo) -> None:
+    """Undo what the site's check scripts wrote (regenerated SVGs under public/).
+
+    Only the post and the registry are ever committed, but a persistent local
+    clone left dirty here would make the next `pull` refuse to run.
+    """
+    try:
+        repo.git.checkout("--", "public")
+        repo.git.clean("-fdq", "--", "public")
+    except Exception:  # noqa: BLE001 - cosmetic; never fail a publish over it
+        log.warning("could not restore public/ after the site checks", exc_info=True)
 
 
 def _ping_indexnow(slug: str) -> None:
